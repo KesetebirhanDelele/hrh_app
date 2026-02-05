@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+from openai import OpenAI
+
+
+@dataclass(frozen=True)
+class LLMNotConfigured(RuntimeError):
+    message: str = "LLM mode not configured. Set HRH_LLM_PROVIDER and OPENAI_API_KEY."
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(frozen=True)
+class LLMResponse:
+    text: str
+
+
+def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[str] = None, repair_instructions: Optional[str] = None) -> LLMResponse:
+    """
+    Generate JSON-only output from an LLM.
+
+    Env vars:
+      - HRH_LLM_PROVIDER: must be 'openai' for now
+      - OPENAI_API_KEY: required
+      - HRH_OPENAI_MODEL: optional (default: gpt-4o-mini)
+    """
+    provider = (provider or os.getenv("HRH_LLM_PROVIDER", "")).strip().lower()
+    if not provider:
+        raise LLMNotConfigured("Set HRH_LLM_PROVIDER=openai and OPENAI_API_KEY.")
+
+    if provider != "openai":
+        raise LLMNotConfigured(f"Unsupported provider '{provider}'. Only 'openai' is implemented.")
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise LLMNotConfigured("Missing OPENAI_API_KEY. Set it in your environment.")
+
+    model = model or os.getenv("HRH_OPENAI_MODEL", "gpt-4o-mini")
+
+    client = OpenAI(api_key=api_key)
+
+    # Force JSON-only behavior via instruction + response format.
+    system_text = (
+        "You must output ONLY valid JSON that matches the requested schema. "
+        "No markdown, no commentary, no code fences, no trailing text. "
+        "If you are given validation errors, fix the JSON to satisfy them."
+    )
+    if repair_instructions:
+        system_text += "\n\nVALIDATION ERRORS TO FIX:\n" + repair_instructions
+
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": prompt},
+        ],
+        response_format={"type": "json_object"},
+    )
+
+    # Extract text from response
+    text = (resp.choices[0].message.content or "").strip()
+    if not text:
+        raise RuntimeError("OpenAI returned empty response.")
+    return LLMResponse(text=text)

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rrr_evidence_matrix.schema.json",
+  "title": "RRR Evidence Matrix Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "spec_id", "generated_at", "solutions"],
+  "properties": {
+    "job_id": { "const": "rrr_evidence_matrix" },
+    "spec_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+    "generated_at": { "$ref": "common.json#/$defs/ISODate" },
+    "solutions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/SolutionEvidenceRow" }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "SolutionEvidenceRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["solution_id", "solution", "mechanism", "evidence", "feasibility_resource_constrained"],
+      "properties": {
+        "solution_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "solution": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "mechanism": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "evidence": {
+          "oneOf": [
+            { "$ref": "common.json#/$defs/EvidenceNote" },
+            { "$ref": "common.json#/$defs/NoEvidence" }
+          ]
+        },
+        "feasibility_resource_constrained": {
+          "type": "string",
+          "enum": ["high", "medium", "low", "unknown"]
+        },
+        "risks": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" },
+          "default": []
+        },
+        "implementation_notes": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+version: v1
+project: hrh_app
+
+defaults:
+  specs_dir: specs
+  prompts_dir: prompts
+  schemas_dir: schemas
+  outputs_dir: outputs
+  data_dir: data
+
+jobs:
+  - job_id: phase1_discovery_qa
+    label: "Phase 1 Discovery Q&A (Ethiopia)"
+    spec_file: "specs/phase1_discovery_questions_ethiopia.json"
+    prompt_template: "prompts/phase1_discovery_qa.md"
+    output_schema: "schemas/phase1_discovery_qa.schema.json"
+    output_dir: "outputs/phase1_discovery_qa"
+
+  - job_id: rrr_evidence_matrix
+    label: "RRR Solutions Evidence Matrix (Resource-Constrained)"
+    spec_file: "specs/rrr_solutions_resource_constrained.json"
+    prompt_template: "prompts/rrr_evidence_matrix.md"
+    output_schema: "schemas/rrr_evidence_matrix.schema.json"
+    output_dir: "outputs/rrr_evidence_matrix"
+
+  - job_id: table2_root_cause_mapping
+    label: "Table 2 Root Cause Framework Mapping"
+    spec_file: "specs/table2_root_cause_framework.json"
+    prompt_template: "prompts/table2_root_cause_mapping.md"
+    output_schema: "schemas/table2_root_cause_mapping.schema.json"
+    output_dir: "outputs/table2_root_cause_mapping"
+
+  - job_id: table3_intervention_framework
+    label: "Table 3 Integrated Intervention Framework"
+    spec_file: "specs/table3_integrated_intervention_framework.json"
+    prompt_template: "prompts/table3_intervention_framework.md"
+    output_schema: "schemas/table3_intervention_framework.schema.json"
+    output_dir: "outputs/table3_intervention_framework"
+
+  - job_id: benchmark_country_scoring
+    label: "Benchmark Country Filters and Scoring"
+    spec_file: "specs/benchmark_country_filters_and_scoring.json"
+    prompt_template: "prompts/benchmark_country_scoring.md"
+    output_schema: "schemas/benchmark_country_scoring.schema.json"
+    output_dir: "outputs/benchmark_country_scoring"
+
+  - job_id: country_learning_briefs
+    label: "Country Learning Domains Briefs"
+    spec_file: "specs/key_hrh_learning_domains.json"
+    prompt_template: "prompts/country_learning_briefs.md"
+    output_schema: "schemas/country_learning_briefs.schema.json"
+    output_dir: "outputs/country_learning_briefs"

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/common.json",
+  "title": "HRH Common Schema Components",
+  "type": "object",
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ISODate": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "Url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "Citation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_title", "locator"],
+      "properties": {
+        "source_title": { "$ref": "#/$defs/NonEmptyString" },
+        "source_url": { "type": "string", "format": "uri" },
+        "published_date": { "$ref": "#/$defs/ISODate" },
+        "locator": {
+          "description": "Where in the source the claim comes from (page/section/table/paragraph/timecode).",
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "quote": {
+          "description": "Optional short excerpt supporting the claim.",
+          "type": "string"
+        },
+        "source_type": {
+          "type": "string",
+          "enum": ["web", "journal", "report", "book", "dataset", "other"]
+        },
+        "reference": {
+          "description": "Free-form reference for grey literature/books when no URL is available.",
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "authors": { "type": "string" },
+        "publisher": { "type": "string" },
+        "isbn": { "type": "string" },
+        "doi": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["source_url"] },
+        { "required": ["reference"] },
+        { "required": ["doi"] },
+        { "required": ["isbn"] }
+      ]
+    },
+    "EvidenceQuality": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "none"]
+    },
+    "EvidenceNote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quality", "rationale"],
+      "properties": {
+        "quality": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "rationale": {
+          "description": "Why this quality rating was chosen; must be factual and concise.",
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "citations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Citation" },
+          "default": []
+        }
+      }
+    },
+    "NoEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quality", "rationale"],
+      "properties": {
+        "quality": { "const": "none" },
+        "rationale": {
+          "description": "Explain what was searched and why no supporting evidence was found.",
+          "$ref": "#/$defs/NonEmptyString"
+        },
+        "citations": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    }
+  }
+}

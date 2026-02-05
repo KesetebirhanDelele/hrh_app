@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "table3_intervention_framework.schema.json",
+  "title": "Table 3 Integrated Intervention Framework Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "spec_id", "generated_at", "interventions"],
+  "properties": {
+    "job_id": { "const": "table3_intervention_framework" },
+    "spec_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+    "generated_at": { "$ref": "common.json#/$defs/ISODate" },
+    "interventions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/InterventionRow" }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "InterventionRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intervention_id", "lever", "intervention", "mechanism", "evidence"],
+      "properties": {
+        "intervention_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "lever": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "intervention": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "mechanism": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "evidence": {
+          "oneOf": [
+            { "$ref": "common.json#/$defs/EvidenceNote" },
+            { "$ref": "common.json#/$defs/NoEvidence" }
+          ]
+        },
+        "implementation_notes": { "type": "string" },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" },
+          "default": []
+        },
+        "risks": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" },
+          "default": []
+        }
+      }
+    }
+  }
+}

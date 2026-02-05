@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "benchmark_country_scoring.schema.json",
+  "title": "Benchmark Country Scoring Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "spec_id", "generated_at", "countries"],
+  "properties": {
+    "job_id": { "const": "benchmark_country_scoring" },
+    "spec_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+    "generated_at": { "$ref": "common.json#/$defs/ISODate" },
+    "countries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/CountryScore" }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "ScoreNote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "evidence"],
+      "properties": {
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "evidence": {
+          "oneOf": [
+            { "$ref": "common.json#/$defs/EvidenceNote" },
+            { "$ref": "common.json#/$defs/NoEvidence" }
+          ]
+        }
+      }
+    },
+    "CountryScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["country_name", "iso3", "overall_score", "dimensions"],
+      "properties": {
+        "country_name": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "iso3": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "overall_score": { "$ref": "#/$defs/ScoreNote" },
+        "dimensions": {
+          "description": "Per-dimension scores keyed by dimension_id.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["dimension_id", "label", "score_note"],
+            "properties": {
+              "dimension_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+              "label": { "$ref": "common.json#/$defs/NonEmptyString" },
+              "score_note": { "$ref": "#/$defs/ScoreNote" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

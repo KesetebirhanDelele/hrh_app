@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "table2_root_cause_mapping.schema.json",
+  "title": "Table 2 Root Cause Mapping Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "spec_id", "generated_at", "framework_items"],
+  "properties": {
+    "job_id": { "const": "table2_root_cause_mapping" },
+    "spec_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+    "generated_at": { "$ref": "common.json#/$defs/ISODate" },
+    "framework_items": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/FrameworkItemMapping" }
+    },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "FrameworkItemMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "category", "root_cause", "definition", "evidence"],
+      "properties": {
+        "item_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "category": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "root_cause": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "definition": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "evidence": {
+          "oneOf": [
+            { "$ref": "common.json#/$defs/EvidenceNote" },
+            { "$ref": "common.json#/$defs/NoEvidence" }
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" },
+          "default": []
+        }
+      }
+    }
+  }
+}
