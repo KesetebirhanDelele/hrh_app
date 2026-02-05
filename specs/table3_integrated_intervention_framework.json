@@ -1,0 +1,44 @@
+{
+  "spec_id": "table3_integrated_intervention_framework_v1",
+  "spec_type": "matrix_spec",
+  "table_id": "table3_hrh_productivity_framework",
+  "version": "v1",
+  "purpose": "Organize interventions by domain and objective (absenteeism/productivity/time-use/travel/gender/GoE ownership).",
+  "domains": [
+    "enabling_environment",
+    "workforce_support",
+    "tools_and_infrastructure",
+    "motivation_and_accountability",
+    "community_engagement",
+    "service_delivery_processes"
+  ],
+  "objectives": [
+    "reduce_absenteeism",
+    "increase_productive_and_hep_time",
+    "minimize_non_productive_time",
+    "lower_travel_burden",
+    "address_gender_inequity",
+    "ensure_goe_ownership_and_adaptability"
+  ],
+  "cell_output_fields": [
+    "candidate_interventions",
+    "mechanism_summary",
+    "dependencies",
+    "gender_equity_considerations",
+    "goe_ownership_rating",
+    "feasibility",
+    "resource_intensity",
+    "evidence_quality",
+    "citations"
+  ],
+  "rating_scales": {
+    "goe_ownership_rating": ["high", "medium", "low"],
+    "feasibility": ["high", "medium", "low"],
+    "resource_intensity": ["low", "medium", "high"],
+    "evidence_quality": ["strong", "moderate", "weak", "none"]
+  },
+  "rendering_guidance": {
+    "word_output": "domain rows x objective columns table",
+    "excel_output": "one row per domain-objective cell (long format) plus optional pivot"
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "spec_id": "benchmark_country_filters_and_scoring_v1",
+  "spec_type": "benchmark_scoring",
+  "version": "v1",
+  "target_final_count": { "min": 5, "max": 7 },
+  "phase2_hrh_relevance_and_reform_maturity": {
+    "description": "Assess existence and maturity of HRH reforms and systems.",
+    "criteria": [
+      {
+        "criterion_id": "P2_C1",
+        "name": "Formal HRH strategy or reform agenda exists",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "none found", "1": "partial/limited", "2": "clear formal strategy/reform agenda" }
+      },
+      {
+        "criterion_id": "P2_C2",
+        "name": "Use of HRH data systems (HRIS, deployment tools)",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "none", "1": "limited/pilot", "2": "functional at scale" }
+      },
+      {
+        "criterion_id": "P2_C3",
+        "name": "Documented HRH governance or management reforms",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "none", "1": "some reforms", "2": "documented reforms with implementation" }
+      },
+      {
+        "criterion_id": "P2_C4",
+        "name": "Evidence of HRH performance monitoring",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "no monitoring", "1": "some monitoring", "2": "regular/functional monitoring system" }
+      }
+    ]
+  },
+  "phase3_performance_and_learning_potential": {
+    "description": "Filter for performance improvements and extractable lessons.",
+    "criteria": [
+      {
+        "criterion_id": "P3_C1",
+        "name": "Evidence of reduced absenteeism",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "no evidence", "1": "mixed/limited", "2": "clear evidence" }
+      },
+      {
+        "criterion_id": "P3_C2",
+        "name": "Improved workforce productivity or availability",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "none", "1": "some", "2": "clear improvement evidence" }
+      },
+      {
+        "criterion_id": "P3_C3",
+        "name": "Functional accountability mechanisms (managerial/community/digital/financial)",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "not present", "1": "present but weak", "2": "functional mechanisms described" }
+      },
+      {
+        "criterion_id": "P3_C4",
+        "name": "Availability of documented lessons (evaluations/studies/policy reports)",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "few/none", "1": "some", "2": "multiple strong sources" }
+      }
+    ]
+  },
+  "phase4_final_selection": {
+    "description": "Select 5–7 benchmark countries based on fit and feasibility of learning.",
+    "criteria": [
+      {
+        "criterion_id": "P4_C1",
+        "name": "Fitness for Ethiopia’s HRH priorities",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "low fit", "1": "medium fit", "2": "high fit" }
+      },
+      {
+        "criterion_id": "P4_C2",
+        "name": "Regional balance (Africa/Asia/Latin America)",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "overrepresented region", "1": "some balance", "2": "good balance contribution" }
+      },
+      {
+        "criterion_id": "P4_C3",
+        "name": "Transferability of lessons",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "low transferability", "1": "moderate", "2": "high transferability with similar constraints" }
+      },
+      {
+        "criterion_id": "P4_C4",
+        "name": "Cost-effectiveness and feasibility of deeper learning (visits vs desk review)",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "hard/costly", "1": "moderate", "2": "feasible/desk-friendly" }
+      },
+      {
+        "criterion_id": "P4_C5",
+        "name": "Acceptability to MoH and partners",
+        "score_scale": [0, 1, 2],
+        "scoring_guide": { "0": "low acceptability", "1": "unknown/mixed", "2": "likely acceptable" }
+      }
+    ]
+  },
+  "scoring": {
+    "weights": { "phase2": 0.3, "phase3": 0.4, "phase4": 0.3 },
+    "total_score_range": [0, 2],
+    "aggregation_method": "weighted_average_of_phase_means"
+  },
+  "output_requirements": {
+    "require_citations": true,
+    "min_citations_per_country": 2,
+    "include_rationale": true,
+    "include_risks": true,
+    "include_transferability_notes": true
+  }
+}

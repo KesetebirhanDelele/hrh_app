@@ -1,0 +1,61 @@
+{
+  "spec_id": "phase1_discovery_questions_ethiopia_v1",
+  "spec_type": "discovery_questions",
+  "country_focus": "Ethiopia",
+  "program": "HEP",
+  "version": "v1",
+  "instructions": {
+    "response_style": "evidence_backed",
+    "require_citations_per_answer": true,
+    "min_citations_per_question": 1,
+    "allow_no_evidence": true,
+    "if_no_evidence_then": "return_no_evidence_found_with_gap_notes"
+  },
+  "questions": [
+    {
+      "question_id": "P1_Q1",
+      "theme_tags": ["allocation", "governance", "process"],
+      "question_text": "What are the current processes guiding the allocation of health workers in the Ethiopian HEP?"
+    },
+    {
+      "question_id": "P1_Q2",
+      "theme_tags": ["productivity", "absenteeism", "motivation", "determinants"],
+      "question_text": "What are the main determinants of productivity, absenteeism, and low motivation among health workers in Ethiopia’s HEP?"
+    },
+    {
+      "question_id": "P1_Q3",
+      "theme_tags": ["policy", "data_sources", "assumptions", "norms", "performance_management"],
+      "question_text": "What existing policies, data sources, assumptions, or norms guide HRH allocation and performance management decisions at different levels of the health system?"
+    },
+    {
+      "question_id": "P1_Q4",
+      "theme_tags": ["gaps", "efficiency", "equity", "effectiveness"],
+      "question_text": "Where are the gaps in current HRH allocation and performance management approaches that hinder efficiency, equity, and effectiveness?"
+    },
+    {
+      "question_id": "P1_Q5",
+      "theme_tags": ["evidence", "time_and_motion_study", "hep_optimization", "utilization"],
+      "question_text": "What lessons can be learned from existing studies such as the Time and Motion Study (TMS) and HEP Optimization Evaluation regarding health worker utilization and performance management?"
+    },
+    {
+      "question_id": "P1_Q6",
+      "theme_tags": ["leverage_points", "need_based_planning", "performance_management"],
+      "question_text": "What are the critical leverage points for introducing need-based planning and more effective performance management approaches in Ethiopia?"
+    },
+    {
+      "question_id": "P1_Q7",
+      "theme_tags": ["gender", "equity", "staffing", "motivation", "safety", "housing", "caregiving", "career_progression"],
+      "question_text": "What are the key gender barriers to equitable staffing, performance, and motivation and satisfaction of male and female health workers at health posts? How do factors such as caregiving responsibilities, safety, housing, and lack of advancement opportunities affect female versus male workers?"
+    },
+    {
+      "question_id": "P1_Q8",
+      "theme_tags": ["monitoring", "sex_disaggregated_data", "hrh_information_systems"],
+      "question_text": "To what extent are current monitoring systems able to capture and respond to sex-disaggregated data related to HRH in the HEP?"
+    },
+    {
+      "question_id": "P1_Q9",
+      "theme_tags": ["political_economy", "scale_up", "feasibility", "priorities"],
+      "question_text": "How do the prevailing political and economic processes and priorities support the adoption and scale up of potential HRH interventions to increase efficiency and productivity in the HEP?"
+    }
+  ]
+}

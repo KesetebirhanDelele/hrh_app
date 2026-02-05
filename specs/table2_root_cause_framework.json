@@ -1,0 +1,63 @@
+{
+  "spec_id": "table2_root_cause_framework_v1",
+  "spec_type": "table_spec",
+  "table_id": "table2_root_causes",
+  "version": "v1",
+  "purpose": "Map and summarize root causes of absenteeism and low productivity by level, using WHO building blocks + COM-B + simplified CFIR.",
+  "levels": [
+    {
+      "level_id": "individual",
+      "label": "Individual (HEP staff)",
+      "primary_factors": ["capability", "motivation"],
+      "seed_examples": ["lack_of_skills", "low_confidence", "burnout", "low_pay", "unclear_role"]
+    },
+    {
+      "level_id": "workplace",
+      "label": "Workplace (Health Post)",
+      "primary_factors": ["resources", "environment"],
+      "seed_examples": ["no_transport", "poor_housing", "no_supplies", "no_job_aids"]
+    },
+    {
+      "level_id": "supervision",
+      "label": "Supervision",
+      "primary_factors": ["support", "feedback"],
+      "seed_examples": ["irregular_visits", "lack_of_feedback", "punitive_style"]
+    },
+    {
+      "level_id": "community",
+      "label": "Community",
+      "primary_factors": ["relationships", "expectations"],
+      "seed_examples": ["low_respect_trust", "unrealistic_demands", "no_local_accountability"]
+    },
+    {
+      "level_id": "health_system",
+      "label": "Health System",
+      "primary_factors": ["policies", "compensation", "monitoring"],
+      "seed_examples": ["delayed_salaries", "inadequate_compensation_structure", "weak_performance_monitoring"]
+    }
+  ],
+  "tag_sets": {
+    "who_building_blocks": [
+      "service_delivery",
+      "health_workforce",
+      "health_information_systems",
+      "access_to_medicines",
+      "financing",
+      "leadership_governance"
+    ],
+    "com_b": ["capability", "opportunity", "motivation"],
+    "simplified_cfir": ["inner_setting", "outer_setting", "readiness", "leadership", "implementation_process"]
+  },
+  "required_output_fields": [
+    "level_id",
+    "factor_category",
+    "root_cause_statement",
+    "com_b_tags",
+    "who_block_tags",
+    "cfir_tags",
+    "evidence_quality",
+    "citations",
+    "notes"
+  ],
+  "evidence_quality_scale": ["strong", "moderate", "weak", "none"]
+}

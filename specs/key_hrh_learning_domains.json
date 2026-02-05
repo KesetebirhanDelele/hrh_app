@@ -1,0 +1,59 @@
+{
+  "spec_id": "key_hrh_learning_domains_v1",
+  "spec_type": "learning_domains",
+  "version": "v1",
+  "domains": [
+    {
+      "domain_id": "accountability",
+      "label": "Accountability",
+      "focus_areas": [
+        "supervision_models",
+        "performance_contracts",
+        "community_or_social_accountability",
+        "enforcement_mechanisms"
+      ]
+    },
+    {
+      "domain_id": "absenteeism",
+      "label": "Absenteeism",
+      "focus_areas": [
+        "measurement_approaches",
+        "incentives_and_sanctions",
+        "deployment_housing_safety_workload_factors"
+      ]
+    },
+    {
+      "domain_id": "productivity",
+      "label": "Productivity",
+      "focus_areas": [
+        "task_design_and_task_shifting",
+        "time_use_optimization",
+        "digital_or_managerial_enablers"
+      ]
+    },
+    {
+      "domain_id": "system_enablers",
+      "label": "System Enablers",
+      "focus_areas": [
+        "governance_arrangements",
+        "financing_and_incentives",
+        "political_economy_considerations"
+      ]
+    }
+  ],
+  "brief_output_sections": [
+    "overview",
+    "results_evidence",
+    "domain_findings",
+    "implementation_conditions",
+    "risks_failure_modes",
+    "transferability_to_ethiopia",
+    "key_quotes"
+  ],
+  "evidence_rules": {
+    "require_citations": true,
+    "min_citations_per_domain": 1,
+    "key_quotes_max": 3,
+    "quote_char_limit": 300
+  }
+}

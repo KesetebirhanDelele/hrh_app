@@ -1,0 +1,51 @@
+{
+  "spec_id": "rrr_solutions_resource_constrained_v1",
+  "spec_type": "rapid_realist_review",
+  "version": "v1",
+  "focus": {
+    "settings": ["resource_constrained", "LMIC", "primary_health_care", "community_health_programs"],
+    "outcomes": ["absenteeism", "productivity", "motivation", "time_use", "availability"],
+    "population": ["frontline_health_workers", "community_health_workers", "health_extension_workers"]
+  },
+  "methods": {
+    "approach": "rapid_realist_review",
+    "unit_of_extraction": "intervention_instance",
+    "core_logic": "Context-Mechanism-Outcome (CMO)",
+    "implementation_lens": "simplified_CFIR",
+    "behavior_lens": "COM-B",
+    "system_lens": "WHO_building_blocks"
+  },
+  "extraction_requirements": {
+    "require_citations_per_row": true,
+    "min_citations_per_row": 1,
+    "allow_no_evidence": true,
+    "if_no_evidence_then": "exclude_row_or_mark_as_hypothesis"
+  },
+  "intervention_families_seed_list": [
+    "supportive_supervision_and_coaching",
+    "performance_contracts_and_scorecards",
+    "attendance_monitoring_and_verification",
+    "financial_incentives_and_allowances",
+    "non_financial_incentives_recognition_career_path",
+    "housing_safety_transport_solutions",
+    "task_shifting_and_task_redesign",
+    "digital_tools_decision_support_scheduling",
+    "community_accountability_mechanisms",
+    "supply_chain_and_job_aids_improvements"
+  ],
+  "row_fields_expected": [
+    "intervention_name",
+    "intervention_family",
+    "target_problem",
+    "context",
+    "mechanism",
+    "outcomes",
+    "implementation_factors",
+    "equity_gender_notes",
+    "resource_intensity",
+    "risks_failure_modes",
+    "transferability_conditions",
+    "evidence_quality",
+    "citations"
+  ]
+}
