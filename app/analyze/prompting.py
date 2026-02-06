@@ -70,11 +70,17 @@ def render_prompt_for_job(
     spec_id: str,
     country_name: Optional[str] = None,
     country_iso3: Optional[str] = None,
+    sources_path: Optional[str] = None,
 ) -> str:
     template = _read_text(Path(template_path))
     spec = _read_json(Path(spec_path))
 
     inputs: Dict[str, Any] = {"spec_id": spec_id}
+
+    # Load curated sources if provided
+    if sources_path:
+        sources_data = _read_json(Path(sources_path))
+        inputs["allowed_sources"] = sources_data.get("sources", [])
 
     if job_id == "phase1_discovery_qa":
         if not country_name:
@@ -138,4 +144,14 @@ def render_prompt_for_job(
     else:
         raise KeyError(f"render_prompt_for_job: unsupported job_id '{job_id}'")
 
-    return template.rstrip() + "\n\n## RENDERED INPUTS (machine-generated)\n" + json.dumps(inputs, ensure_ascii=False, indent=2) + "\n"
+    # Build final prompt
+    final_prompt = template.rstrip() + "\n\n## RENDERED INPUTS (machine-generated)\n" + json.dumps(inputs, ensure_ascii=False, indent=2) + "\n"
+
+    # Add source_id enforcement instruction if allowed_sources provided
+    if sources_path and inputs.get("allowed_sources"):
+        final_prompt += "\n## IMPORTANT: Source ID Enforcement\n"
+        final_prompt += "When citing from the allowed_sources above, you MUST include the source_id field in each citation.\n"
+        final_prompt += "The source_id must match one of the source_id values from allowed_sources (e.g., SRC1, SRC2, etc.).\n"
+        final_prompt += "This enables validation that citations reference only the curated sources provided.\n"
+
+    return final_prompt

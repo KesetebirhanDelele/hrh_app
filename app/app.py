@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -72,6 +73,18 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         job = get_job(args.job)
 
+        # Extract allowed source IDs if sources provided
+        sources_path = getattr(args, "sources", None)
+        if sources_path:
+            try:
+                sources_data = _read_json(Path(sources_path))
+                allowed_ids = [src.get("source_id") for src in sources_data.get("sources", []) if src.get("source_id")]
+                if allowed_ids:
+                    os.environ["HRH_ALLOWED_SOURCE_IDS"] = ",".join(allowed_ids)
+                    os.environ["HRH_ENFORCE_ALLOWED_SOURCES"] = "1"
+            except Exception as e:
+                print(f"Warning: Could not load sources for validation: {e}", file=sys.stderr)
+
         try:
             rendered_prompt = render_prompt_for_job(
                 job_id=args.job,
@@ -80,6 +93,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 spec_id=args.spec_id,
                 country_name=getattr(args, "country_name", None),
                 country_iso3=getattr(args, "country_iso3", None),
+                sources_path=sources_path,
             )
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -131,6 +145,68 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_sources_scan(args: argparse.Namespace) -> int:
+    iso3 = args.country_iso3.upper()
+    sources_dir = Path("data/sources").resolve()
+
+    # Scan directories
+    pdf_dir = sources_dir / iso3 / "pdf"
+    docx_dir = sources_dir / iso3 / "docx"
+
+    sources = []
+    source_counter = 1
+
+    # Scan PDF files
+    if pdf_dir.exists():
+        for pdf_file in sorted(pdf_dir.glob("*.pdf")):
+            source_title = pdf_file.stem  # filename without extension
+            rel_path = pdf_file.relative_to(Path.cwd().resolve())
+            sources.append({
+                "source_id": f"SRC{source_counter}",
+                "source_title": source_title,
+                "source_type": "pdf",
+                "file_path": str(rel_path).replace("\\", "/"),
+                "reference": f"{source_title} (PDF document)",
+                "snippets": []
+            })
+            source_counter += 1
+
+    # Scan DOCX files
+    if docx_dir.exists():
+        for docx_file in sorted(docx_dir.glob("*.docx")):
+            source_title = docx_file.stem
+            rel_path = docx_file.relative_to(Path.cwd().resolve())
+            sources.append({
+                "source_id": f"SRC{source_counter}",
+                "source_title": source_title,
+                "source_type": "docx",
+                "file_path": str(rel_path).replace("\\", "/"),
+                "reference": f"{source_title} (DOCX document)",
+                "snippets": []
+            })
+            source_counter += 1
+
+    if not sources:
+        print(f"No PDF or DOCX files found in:", file=sys.stderr)
+        print(f"  {pdf_dir}", file=sys.stderr)
+        print(f"  {docx_dir}", file=sys.stderr)
+        return 1
+
+    # Write output JSON
+    output_data = {"sources": sources}
+    output_file = sources_dir / f"{iso3.lower()}_sources.json"
+
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(
+        json.dumps(output_data, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+
+    print(f"Scanned {len(sources)} file(s)")
+    print(f"Wrote: {output_file}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hrh_app")
     sub = p.add_subparsers(dest="command", required=True)
@@ -146,7 +222,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--spec-id", required=True, help="Spec identifier string to embed in output")
     r.add_argument("--country-name", default=None, help="Country name (Phase 1 only for now)")
     r.add_argument("--country-iso3", default=None, help="ISO3 (Phase 1 only for now)")
+    r.add_argument("--sources", default=None, help="Optional path to curated sources JSON file")
     r.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("sources-scan", help="Scan PDF/DOCX files and generate sources JSON")
+    s.add_argument("--country-iso3", required=True, help="ISO3 country code (e.g., ETH, KEN)")
+    s.set_defaults(func=cmd_sources_scan)
 
     m = sub.add_parser("render-md", help="Render a validated output JSON to Markdown")
     m.add_argument("--job", required=True, help="Job id")

@@ -1,0 +1,108 @@
+{
+  "sources": [
+    {
+      "source_id": "SRC1",
+      "source_title": "Ethiopia Health Sector Transformation Plan II",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Ethiopia Health Sector Transformation Plan II.pdf",
+      "reference": "Ethiopia Health Sector Transformation Plan II (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC2",
+      "source_title": "Ethiopia_Roadmap_ENG_Final_20211202.pdf",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Ethiopia_Roadmap_ENG_Final_20211202.pdf.pdf",
+      "reference": "Ethiopia_Roadmap_ENG_Final_20211202.pdf (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC3",
+      "source_title": "Ethiopia’s health extension workers use of work time on duty",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Ethiopia’s health extension workers use of work time on duty.pdf",
+      "reference": "Ethiopia’s health extension workers use of work time on duty (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC4",
+      "source_title": "Ethiopia’s PHC at a Glance 2022 AN ASSESSMENT USING PHCPI FRAMEWORK",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Ethiopia’s PHC at a Glance 2022 AN ASSESSMENT USING PHCPI FRAMEWORK.pdf",
+      "reference": "Ethiopia’s PHC at a Glance 2022 AN ASSESSMENT USING PHCPI FRAMEWORK (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC5",
+      "source_title": "HEP_Assessment_Abridged_Report_Final",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/HEP_Assessment_Abridged_Report_Final.pdf",
+      "reference": "HEP_Assessment_Abridged_Report_Final (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC6",
+      "source_title": "HEP_Roadmap_Abridged_Version_Final (1)",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/HEP_Roadmap_Abridged_Version_Final (1).pdf",
+      "reference": "HEP_Roadmap_Abridged_Version_Final (1) (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC7",
+      "source_title": "HRH Strategic Plan 2016-2025",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/HRH Strategic Plan 2016-2025.pdf",
+      "reference": "HRH Strategic Plan 2016-2025 (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC8",
+      "source_title": "Human Resources for Health Strategic and Investment Plan (HRHSIP) for Ethiopia, 2016-20222024-2030",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Human Resources for Health Strategic and Investment Plan (HRHSIP) for Ethiopia, 2016-20222024-2030.pdf",
+      "reference": "Human Resources for Health Strategic and Investment Plan (HRHSIP) for Ethiopia, 2016-20222024-2030 (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC9",
+      "source_title": "Insights-to-optimizing-health-extension-workers-time-use-and-efficiency-in-Ethiopia-a-qualitative-study",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Insights-to-optimizing-health-extension-workers-time-use-and-efficiency-in-Ethiopia-a-qualitative-study.pdf",
+      "reference": "Insights-to-optimizing-health-extension-workers-time-use-and-efficiency-in-Ethiopia-a-qualitative-study (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC10",
+      "source_title": "Multidimensional performance enablers of Ethiopian community-based health extension program",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Multidimensional performance enablers of Ethiopian community-based health extension program.pdf",
+      "reference": "Multidimensional performance enablers of Ethiopian community-based health extension program (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC11",
+      "source_title": "Optimising_the_ethiopian_health_extension_programme_english",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Optimising_the_ethiopian_health_extension_programme_english.pdf",
+      "reference": "Optimising_the_ethiopian_health_extension_programme_english (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC12",
+      "source_title": "Policy-Dialogue-Report_Ethiopian-NC_for-website-upload-final",
+      "source_type": "pdf",
+      "file_path": "data/sources/ETH/pdf/Policy-Dialogue-Report_Ethiopian-NC_for-website-upload-final.pdf",
+      "reference": "Policy-Dialogue-Report_Ethiopian-NC_for-website-upload-final (PDF document)",
+      "snippets": []
+    },
+    {
+      "source_id": "SRC13",
+      "source_title": "Health Extension Program Evaluation",
+      "source_type": "docx",
+      "file_path": "data/sources/ETH/docx/Health Extension Program Evaluation.docx",
+      "reference": "Health Extension Program Evaluation (DOCX document)",
+      "snippets": []
+    }
+  ]
+}

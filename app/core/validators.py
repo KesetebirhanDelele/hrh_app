@@ -34,6 +34,18 @@ def _is_http_url(u: str) -> bool:
         return False
 
 
+def _enforce_allowed_sources_enabled() -> bool:
+    return os.getenv("HRH_ENFORCE_ALLOWED_SOURCES", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _get_allowed_source_ids() -> set[str]:
+    """Get the allowed source IDs from environment variable."""
+    ids_str = os.getenv("HRH_ALLOWED_SOURCE_IDS", "")
+    if not ids_str:
+        return set()
+    return {sid.strip() for sid in ids_str.split(",") if sid.strip()}
+
+
 def _load_json(path: Path) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -126,3 +138,32 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
                     walk(v, f"{path}[{i}]")
 
         walk(payload)
+
+    # Optional allowed sources enforcement: citations must reference curated sources
+    if _enforce_allowed_sources_enabled():
+        allowed_ids = _get_allowed_source_ids()
+        if allowed_ids:
+            def walk_sources(obj, path="$"):
+                if isinstance(obj, dict):
+                    # If this dict looks like a citation, check source_id
+                    if "source_title" in obj and "locator" in obj:
+                        source_id = obj.get("source_id")
+                        if not source_id:
+                            raise SchemaValidationError(
+                                schema_path=str(schema_file),
+                                message="Source ID enforcement failed (HRH_ENFORCE_ALLOWED_SOURCES=1)",
+                                errors=[f"{path}: Citation must include 'source_id' field when using curated sources."],
+                            )
+                        if source_id not in allowed_ids:
+                            raise SchemaValidationError(
+                                schema_path=str(schema_file),
+                                message="Source ID enforcement failed (HRH_ENFORCE_ALLOWED_SOURCES=1)",
+                                errors=[f"{path}: source_id '{source_id}' is not in allowed sources: {sorted(allowed_ids)}"],
+                            )
+                    for k, v in obj.items():
+                        walk_sources(v, f"{path}.{k}")
+                elif isinstance(obj, list):
+                    for i, v in enumerate(obj):
+                        walk_sources(v, f"{path}[{i}]")
+
+            walk_sources(payload)

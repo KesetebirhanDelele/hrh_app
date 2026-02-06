@@ -37,6 +37,9 @@ export HRH_STRICT_CITATIONS=1
 
 # Use a specific OpenAI model (default: gpt-4o-mini)
 export HRH_OPENAI_MODEL=gpt-4o
+
+# Note: When using --sources flag, HRH_ENFORCE_ALLOWED_SOURCES and HRH_ALLOWED_SOURCE_IDS
+# are automatically set to validate citations reference only curated sources
 ```
 
 **Windows (PowerShell):**
@@ -51,6 +54,9 @@ $env:HRH_STRICT_CITATIONS="1"  # optional
 ```bash
 # Generate output using LLM
 python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH
+
+# With curated sources (for grounded citations)
+python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH --sources data/sources/ethiopia_sources.json
 
 # Or generate stub output (no LLM required)
 python -m app.app run --job phase1_discovery_qa --mode stub --spec-id test_spec --country-name Ethiopia --country-iso3 ETH
@@ -274,6 +280,103 @@ The app supports multiple citation types to accommodate various source materials
 ```
 
 Every citation **must** include at least one identifier: `source_url`, `reference`, `doi`, or `isbn`.
+
+## Curated Sources (Grounded Generation)
+
+For better citation quality and grounding, you can provide a curated JSON file of trusted sources with snippets. The LLM will receive these as "ALLOWED SOURCES" in the prompt.
+
+**Create a sources file** (e.g., `data/sources/ethiopia_sources.json`):
+```json
+{
+  "sources": [
+    {
+      "source_id": "SRC1",
+      "source_title": "Ethiopia Health Sector Transformation Plan II",
+      "reference": "Federal Ministry of Health (Ethiopia). HSTP II, 2020/21–2024/25.",
+      "published_date": "2021-01-01",
+      "locator_hint": "HRH chapter / performance management sections",
+      "snippets": [
+        {
+          "locator": "HRH section",
+          "quote": "Your trusted excerpt from the document..."
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Use with any job:**
+```bash
+python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH --sources data/sources/ethiopia_sources.json
+```
+
+**Benefits:**
+- ✅ Manual curation ensures quality sources
+- ✅ LLM sees relevant context without vector search complexity
+- ✅ Citations can reference your trusted sources
+- ✅ No need for embeddings or vector databases (yet)
+
+**Source ID Enforcement:**
+
+When you use the `--sources` flag, the app automatically enforces that all citations include a `source_id` field and that the ID matches one from your curated sources. This ensures:
+- Citations are grounded in your trusted sources
+- No hallucinated or invalid source references
+- Full traceability from claims to source documents
+
+The LLM receives an instruction to include `source_id` in citations, and validation will fail if:
+- A citation is missing the `source_id` field
+- A `source_id` doesn't match any ID in your sources file (e.g., SRC1, SRC2, etc.)
+
+Example citation with source_id:
+```json
+{
+  "source_id": "SRC1",
+  "source_title": "Ethiopia Health Sector Transformation Plan II",
+  "locator": "HRH section, page 45",
+  "reference": "Federal Ministry of Health (Ethiopia). HSTP II, 2020/21–2024/25."
+}
+```
+
+### Auto-Generate Sources from Files
+
+The `sources-scan` command automatically creates a sources JSON file by scanning PDF and DOCX files in country-specific directories:
+
+**1. Organize your source files:**
+```
+data/sources/
+└── ETH/
+    ├── pdf/
+    │   ├── Ethiopia Health Sector Transformation Plan II.pdf
+    │   └── HRH Strategic Plan 2016-2025.pdf
+    └── docx/
+        └── Health Extension Program Evaluation.docx
+```
+
+**2. Run the scan command:**
+```bash
+python -m app.app sources-scan --country-iso3 ETH
+```
+
+**3. Output:**
+```
+Scanned 3 file(s)
+Wrote: data/sources/eth_sources.json
+```
+
+The generated JSON includes:
+- `source_id`: Auto-numbered (SRC1, SRC2, etc.)
+- `source_title`: Extracted from filename
+- `source_type`: pdf or docx
+- `file_path`: Relative path to the file
+- `reference`: Auto-generated (editable)
+- `snippets`: Empty array (add manually or via future extraction tools)
+
+**Next steps:**
+1. Edit the generated JSON to improve `reference` fields
+2. Add `published_date` and other optional fields
+3. Manually add `snippets` with relevant quotes (or use future extraction tools)
+4. Use with `--sources` flag when running jobs
 
 ## Development
 

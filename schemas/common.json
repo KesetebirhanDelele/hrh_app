@@ -21,6 +21,10 @@
       "additionalProperties": false,
       "required": ["source_title", "locator"],
       "properties": {
+        "source_id": {
+          "description": "Optional source ID referencing a curated source (e.g., SRC1, SRC2).",
+          "$ref": "#/$defs/NonEmptyString"
+        },
         "source_title": { "$ref": "#/$defs/NonEmptyString" },
         "source_url": { "type": "string", "format": "uri" },
         "published_date": { "$ref": "#/$defs/ISODate" },

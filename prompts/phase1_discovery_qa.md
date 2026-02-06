@@ -31,6 +31,12 @@ And MUST include at least ONE of:
 If you cannot provide any of the above identifiers, do NOT include the citation.
 If you have no citations after applying the rule, you MUST use NoEvidence (quality="none", citations=[]).
 
+### ALLOWED SOURCES POLICY
+If `allowed_sources` are provided in inputs, every citation MUST include:
+- `source_id`: must match one of `allowed_sources[].source_id` (e.g., SRC1, SRC2)
+- You may ONLY cite from `allowed_sources`. Do not invent or reference sources outside this list.
+- If you cannot find supporting evidence in `allowed_sources`, use NoEvidence.
+
 Additional formatting rules:
 - If you include `published_date`, it MUST be in ISO `YYYY-MM-DD`. If you only know year-month, either:
   - omit `published_date`, OR
