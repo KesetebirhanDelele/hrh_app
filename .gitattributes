@@ -1,0 +1,10 @@
+# Normalize line endings in repo; keep LF in git, convert to CRLF on Windows checkout if desired by git config.
+* text=auto
+
+# Force LF for key text formats to avoid noisy diffs
+*.py   text eol=lf
+*.md   text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
