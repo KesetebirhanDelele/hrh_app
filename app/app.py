@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.core.validators import SchemaValidationError, validate_output
 from app.jobs.executor import run_job_stub
-from app.jobs.registry import get_job
+from app.jobs.registry import get_job, load_registry
 from app.render.md import render_md_file
 from app.render.xlsx import render_xlsx_file
 from app.render.docx import render_docx_file
@@ -145,6 +145,61 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_run_all(args: argparse.Namespace) -> int:
+    """Run all jobs from the registry with the same mode and parameters."""
+    registry = load_registry()
+
+    results = []
+    sources_path = getattr(args, "sources", None)
+    country_name = getattr(args, "country_name", None)
+    country_iso3 = getattr(args, "country_iso3", None)
+
+    print(f"Running {len(registry.jobs)} job(s) in {args.mode} mode...")
+    print()
+
+    for job_id, job_def in registry.jobs.items():
+        print(f"[{job_id}] Starting...")
+
+        # Create a mock args namespace for this job
+        # Use provided spec_id or default to job_id
+        spec_id = getattr(args, "spec_id", None) or job_id
+
+        job_args = argparse.Namespace(
+            job=job_id,
+            mode=args.mode,
+            spec_id=spec_id,
+            country_name=country_name,
+            country_iso3=country_iso3,
+            sources=sources_path,
+        )
+
+        try:
+            result = cmd_run(job_args)
+            if result == 0:
+                print(f"[{job_id}] VALID ✅")
+                results.append((job_id, "SUCCESS"))
+            else:
+                print(f"[{job_id}] FAILED ❌ (exit code: {result})")
+                results.append((job_id, f"FAILED (code {result})"))
+        except Exception as e:
+            print(f"[{job_id}] ERROR ❌: {e}")
+            results.append((job_id, f"ERROR: {str(e)[:50]}"))
+
+        print()
+
+    # Print summary
+    print("=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    for job_id, status in results:
+        icon = "✅" if status == "SUCCESS" else "❌"
+        print(f"{icon} {job_id}: {status}")
+
+    # Return 0 if all succeeded, 1 if any failed
+    failed_count = sum(1 for _, status in results if status != "SUCCESS")
+    return 1 if failed_count > 0 else 0
+
+
 def cmd_sources_scan(args: argparse.Namespace) -> int:
     iso3 = args.country_iso3.upper()
     sources_dir = Path("data/sources").resolve()
@@ -224,6 +279,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--country-iso3", default=None, help="ISO3 (Phase 1 only for now)")
     r.add_argument("--sources", default=None, help="Optional path to curated sources JSON file")
     r.set_defaults(func=cmd_run)
+
+    ra = sub.add_parser("run-all", help="Run all jobs from registry in batch")
+    ra.add_argument("--mode", required=True, choices=["stub", "llm"], help="Execution mode")
+    ra.add_argument("--spec-id", default=None, help="Spec identifier (defaults to job_id for each job)")
+    ra.add_argument("--country-name", default=None, help="Country name (for country-specific jobs)")
+    ra.add_argument("--country-iso3", default=None, help="ISO3 country code (for country-specific jobs)")
+    ra.add_argument("--sources", default=None, help="Optional path to curated sources JSON file")
+    ra.set_defaults(func=cmd_run_all)
 
     s = sub.add_parser("sources-scan", help="Scan PDF/DOCX files and generate sources JSON")
     s.add_argument("--country-iso3", required=True, help="ISO3 country code (e.g., ETH, KEN)")
