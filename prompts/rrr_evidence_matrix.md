@@ -7,7 +7,7 @@ You MUST output valid JSON ONLY (no markdown, no prose) that validates against:
 ## Output rules
 - Output must contain: job_id, spec_id, generated_at, solutions
 - Each solutions[] row MUST include evidence:
-  - Use EvidenceNote with citations[] if sources are available
+  - Use EvidenceNote ONLY if you have at least one valid citation after applying citation rules
   - Otherwise use NoEvidence with quality="none" and citations=[]
 
 ## STRICT CONSTRAINTS (must follow exactly)
@@ -17,20 +17,10 @@ You MUST output valid JSON ONLY (no markdown, no prose) that validates against:
      {
        "quality": "high" | "medium" | "low",
        "rationale": "<string>",
-       "citations": [
-         {
-           "source_title": "<string>",
-           "locator": "<string>",
-           "source_url": "<valid https://... URL>" (if available),
-           "reference": "<Full citation string>" (if no URL),
-           "doi": "<DOI>" (if academic paper),
-           "isbn": "<ISBN>" (if book),
-           "published_date": "YYYY-MM-DD" (optional),
-           "quote": "<string>" (optional)
-         }
-       ]
+       "citations": [ <one or more valid citation objects> ]
      }
      CRITICAL: Each citation MUST have at least ONE of: source_url, reference, doi, or isbn
+     CRITICAL: If citations would be empty after applying rules, you MUST use NoEvidence instead.
   B) NoEvidence:
      {
        "quality": "none",
@@ -42,24 +32,35 @@ You MUST output valid JSON ONLY (no markdown, no prose) that validates against:
   "high" | "medium" | "low" | "unknown"
   (Do NOT use "moderate". Map "moderate" to "medium".)
 
+### Grounding specificity (CRITICAL)
+- For each solution, the evidence.rationale MUST state:
+  - what outcome(s) the evidence supports (e.g., attendance, motivation, productivity, quality)
+  - the context limits (e.g., LMIC/primary care; not Ethiopia-specific)
+- locator MUST be specific (page/section/table/figure). Avoid vague locators like "report" or "overview".
+- If a claim about effectiveness cannot be supported by allowed_sources, use NoEvidence (do not guess).
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)
-- locator (string)
+- locator (string) — specific page/section/table/figure
 And MUST include at least ONE of:
 - source_url (valid http/https URL), OR
 - reference (non-empty grey literature/book/report reference), OR
 - doi, OR
 - isbn
 
+Strongly preferred:
+- quote (short excerpt 1–3 sentences supporting the key claim)
+
 If you cannot provide any of the above identifiers, do NOT include the citation.
 If you have no citations after applying the rule, you MUST use NoEvidence (quality="none", citations=[]).
 
 ### ALLOWED SOURCES POLICY
-If `allowed_sources` are provided in inputs, every citation MUST include:
-- `source_id`: must match one of `allowed_sources[].source_id` (e.g., SRC1, SRC2)
-- You may ONLY cite from `allowed_sources`. Do not invent or reference sources outside this list.
-- If you cannot find supporting evidence in `allowed_sources`, use NoEvidence.
+If `allowed_sources` are provided in inputs:
+- Every citation MUST include:
+  - source_id: must match one of allowed_sources[].source_id
+- You may ONLY cite from allowed_sources.
+- If allowed_sources do not support the solution’s evidence claim, use NoEvidence.
 
 ## Inputs you will receive
 - spec_id (string)
