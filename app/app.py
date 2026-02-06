@@ -200,6 +200,79 @@ def cmd_run_all(args: argparse.Namespace) -> int:
     return 1 if failed_count > 0 else 0
 
 
+def cmd_render_all(args: argparse.Namespace) -> int:
+    """Render deliverables (md/xlsx/docx) for all jobs from existing outputs."""
+    registry = load_registry()
+    mode = args.mode
+    suffix = "output_stub.json" if mode == "stub" else "output_llm.json"
+
+    print(f"Rendering deliverables for {len(registry.jobs)} job(s) from {suffix}...")
+    print()
+
+    results = []
+
+    for job_id, job_def in registry.jobs.items():
+        print(f"[{job_id}] Starting...")
+        input_file = job_def.output_dir / suffix
+
+        if not input_file.exists():
+            print(f"[{job_id}] SKIP: missing {input_file}")
+            results.append((job_id, "SKIP"))
+            print()
+            continue
+
+        try:
+            # Narrative jobs -> MD + DOCX
+            if job_id in ("phase1_discovery_qa", "country_learning_briefs"):
+                md_path = render_md_file(job_id, str(input_file))
+                docx_path = render_docx_file(job_id, str(input_file))
+                print(f"[{job_id}] Wrote: {md_path}")
+                print(f"[{job_id}] Wrote: {docx_path}")
+
+            # Table jobs -> MD + XLSX
+            elif job_id in (
+                "rrr_evidence_matrix",
+                "table2_root_cause_mapping",
+                "table3_intervention_framework",
+                "benchmark_country_scoring",
+            ):
+                md_path = render_md_file(job_id, str(input_file))
+                xlsx_path = render_xlsx_file(job_id, str(input_file))
+                print(f"[{job_id}] Wrote: {md_path}")
+                print(f"[{job_id}] Wrote: {xlsx_path}")
+
+            else:
+                print(f"[{job_id}] SKIP: no renderer mapping")
+                results.append((job_id, "SKIP"))
+                print()
+                continue
+
+            print(f"[{job_id}] DONE OK")
+            results.append((job_id, "SUCCESS"))
+
+        except Exception as e:
+            print(f"[{job_id}] ERROR: {e}")
+            results.append((job_id, f"ERROR: {str(e)[:50]}"))
+
+        print()
+
+    # Print summary
+    print("=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    for job_id, status in results:
+        if status == "SUCCESS":
+            print(f"[OK] {job_id}: {status}")
+        elif status == "SKIP":
+            print(f"[SKIP] {job_id}: {status}")
+        else:
+            print(f"[ERROR] {job_id}: {status}")
+
+    # Return 0 if all succeeded, 1 if any failed/skipped
+    failed_count = sum(1 for _, status in results if status != "SUCCESS")
+    return 1 if failed_count > 0 else 0
+
+
 def cmd_sources_scan(args: argparse.Namespace) -> int:
     iso3 = args.country_iso3.upper()
     sources_dir = Path("data/sources").resolve()
@@ -287,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
     ra.add_argument("--country-iso3", default=None, help="ISO3 country code (for country-specific jobs)")
     ra.add_argument("--sources", default=None, help="Optional path to curated sources JSON file")
     ra.set_defaults(func=cmd_run_all)
+
+    ra2 = sub.add_parser("render-all", help="Render deliverables for all jobs (md/xlsx/docx) from existing outputs")
+    ra2.add_argument("--mode", required=True, choices=["stub", "llm"], help="Which output files to render (stub or llm)")
+    ra2.set_defaults(func=cmd_render_all)
 
     s = sub.add_parser("sources-scan", help="Scan PDF/DOCX files and generate sources JSON")
     s.add_argument("--country-iso3", required=True, help="ISO3 country code (e.g., ETH, KEN)")
