@@ -75,7 +75,35 @@ python -m app.app render-xlsx --job rrr_evidence_matrix --file outputs/rrr_evide
 python -m app.app render-docx --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json
 ```
 
-### 6. Run Tests
+### 6. Batch Operations
+
+Run or render all jobs at once:
+
+```bash
+# Run all jobs in batch (stub mode)
+python -m app.app run-all --mode stub --country-name Ethiopia --country-iso3 ETH
+
+# Run all jobs with LLM
+python -m app.app run-all --mode llm --country-name Ethiopia --country-iso3 ETH --sources data/sources/eth_sources.json
+
+# Render all deliverables from existing outputs
+python -m app.app render-all --mode stub  # renders from output_stub.json files
+python -m app.app render-all --mode llm   # renders from output_llm.json files
+```
+
+The `run-all` command:
+- Runs every job in the registry with the same parameters
+- Prints progress for each job
+- Shows a summary of successes/failures
+
+The `render-all` command:
+- Renders deliverables for all jobs from existing output files
+- Narrative jobs (phase1_discovery_qa, country_learning_briefs) → MD + DOCX
+- Table jobs (rrr_evidence_matrix, table2_root_cause_mapping, table3_intervention_framework, benchmark_country_scoring) → MD + XLSX
+- Skips jobs with missing output files
+- Shows a summary of successes/skips/errors
+
+### 7. Run Tests
 
 ```bash
 pytest -q
