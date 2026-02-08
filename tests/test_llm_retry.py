@@ -70,9 +70,23 @@ def test_llm_retry_repairs_schema_failure(monkeypatch: pytest.MonkeyPatch) -> No
     assert exit_code == 0
     assert calls["n"] == 2  # proves retry happened
 
-    out_path = Path("outputs/phase1_discovery_qa/output_llm.json")
+    # Find the most recent timestamped folder
+    job_output_dir = Path("outputs/phase1_discovery_qa")
+    matching_files = []
+    for folder in job_output_dir.iterdir():
+        if folder.is_dir():
+            json_file = folder / "output_llm.json"
+            if json_file.exists():
+                matching_files.append(json_file)
+
+    assert len(matching_files) > 0, "No output_llm.json found in timestamped folders"
+
+    # Get the most recent file
+    matching_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    out_path = matching_files[0]
+
     assert out_path.exists()
 
-    # Optional cleanup (keep repo tidy)
-    # Comment out if you prefer to keep artifacts for debugging.
-    out_path.unlink(missing_ok=True)
+    # Clean up the entire timestamped folder
+    import shutil
+    shutil.rmtree(out_path.parent, ignore_errors=True)

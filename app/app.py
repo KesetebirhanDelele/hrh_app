@@ -214,12 +214,12 @@ def cmd_render_all(args: argparse.Namespace) -> int:
     """Render deliverables (md/xlsx/docx) for all jobs from existing outputs."""
     registry = load_registry()
     mode = args.mode
-    pattern = f"output_{mode}*.json"
+    filename = f"output_{mode}.json"
 
     country_name = getattr(args, "country_name", None)
     country_iso3 = getattr(args, "country_iso3", None)
 
-    print(f"Rendering deliverables for {len(registry.jobs)} job(s) from {pattern} files...")
+    print(f"Rendering deliverables for {len(registry.jobs)} job(s) from {filename} in timestamped folders...")
     print()
 
     results = []
@@ -227,17 +227,24 @@ def cmd_render_all(args: argparse.Namespace) -> int:
     for job_id, job_def in registry.jobs.items():
         print(f"[{job_id}] Starting...")
 
-        # Find most recent matching JSON file
-        matching_files = sorted(job_def.output_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+        # Find all timestamped folders and look for the target JSON file
+        matching_files = []
+        for folder in job_def.output_dir.iterdir():
+            if folder.is_dir():
+                json_file = folder / filename
+                if json_file.exists():
+                    matching_files.append(json_file)
 
         if not matching_files:
-            print(f"[{job_id}] SKIP: no {pattern} files found in {job_def.output_dir}")
+            print(f"[{job_id}] SKIP: no {filename} found in timestamped folders under {job_def.output_dir}")
             results.append((job_id, "SKIP"))
             print()
             continue
 
-        input_file = matching_files[0]  # Use most recent
-        print(f"[{job_id}] Using: {input_file.name}")
+        # Sort by modification time, use most recent
+        matching_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        input_file = matching_files[0]
+        print(f"[{job_id}] Using: {input_file.parent.name}/{input_file.name}")
 
         try:
             # Narrative jobs -> MD + DOCX

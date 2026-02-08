@@ -79,6 +79,55 @@ def detect_country_from_path(path: Path) -> tuple[str | None, str | None]:
     return (None, None)
 
 
+def create_timestamped_folder(
+    base_dir: str | Path,
+    country_name: str | None = None,
+    country_iso3: str | None = None,
+    timestamp: str | None = None
+) -> Path:
+    """
+    Create a timestamped country folder for outputs.
+
+    Args:
+        base_dir: Base directory (e.g., outputs/job_id/)
+        country_name: Optional country name (auto-detected from path if not provided)
+        country_iso3: Optional ISO3 country code (auto-detected from path if not provided)
+        timestamp: Optional timestamp string (generated if not provided)
+
+    Returns:
+        Path to the created timestamped folder
+    """
+    base_path = Path(base_dir)
+
+    # Auto-detect country if not provided
+    if not country_name and not country_iso3:
+        detected_name, detected_iso3 = detect_country_from_path(base_path)
+        country_name = country_name or detected_name
+        country_iso3 = country_iso3 or detected_iso3
+
+    # Get country token
+    country_token = ""
+    if country_iso3:
+        country_token = country_iso3.upper()
+    elif country_name:
+        country_token = slugify(country_name).title()
+
+    # Generate timestamp if not provided
+    if not timestamp:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    # Build folder name
+    if country_token:
+        folder_name = f"{country_token}_{timestamp}"
+    else:
+        folder_name = f"run_{timestamp}"
+
+    folder_path = base_path / folder_name
+    folder_path.mkdir(parents=True, exist_ok=True)
+
+    return folder_path
+
+
 def auto_output_name(
     path: str | Path,
     extension: str,
@@ -87,7 +136,7 @@ def auto_output_name(
     country_iso3: str | None = None
 ) -> str:
     """
-    Generate auto-output filename with country info and timestamp.
+    Generate output filename in a timestamped country folder.
 
     Args:
         path: Path to file or directory (used for country detection and output location)
@@ -97,7 +146,7 @@ def auto_output_name(
         country_iso3: Optional ISO3 country code (auto-detected from path if not provided)
 
     Returns:
-        Full path to auto-generated output file
+        Full path to output file in timestamped folder
     """
     file_path = Path(path)
 
@@ -117,29 +166,33 @@ def auto_output_name(
         else:
             mode = "out"
 
-    # Get country token
-    country_token = ""
-    if country_iso3:
-        country_token = country_iso3.upper()
-    elif country_name:
-        country_token = slugify(country_name)
-
-    # Generate timestamp
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-
-    # Build filename
-    parts = ["output", mode]
-    if country_token:
-        parts.append(country_token)
-    parts.append(stamp)
-
-    filename = "_".join(parts) + f".{extension}"
-
-    # Output to same directory as the path
-    # If path has a file extension, use parent directory; otherwise use path itself
-    if file_path.suffix:  # Has extension like .json, .xlsx -> it's a file
-        output_dir = file_path.parent
+    # Determine base directory
+    if file_path.suffix:  # Has extension -> it's a file
+        base_dir = file_path.parent
     else:  # No extension -> it's a directory
-        output_dir = file_path
+        base_dir = file_path
+
+    # Check if we're already in a timestamped folder
+    # (folder name matches pattern: COUNTRY_YYYYMMDD_HHMMSS or run_YYYYMMDD_HHMMSS)
+    folder_name = base_dir.name
+    if "_" in folder_name:
+        parts = folder_name.split("_")
+        # Check if last two parts look like timestamp: YYYYMMDD_HHMMSS
+        if len(parts) >= 2 and len(parts[-1]) == 6 and len(parts[-2]) == 8:
+            if parts[-1].isdigit() and parts[-2].isdigit():
+                # Already in a timestamped folder, use it directly
+                output_dir = base_dir
+            else:
+                # Not in a timestamped folder, create one
+                output_dir = create_timestamped_folder(base_dir, country_name, country_iso3)
+        else:
+            # Not in a timestamped folder, create one
+            output_dir = create_timestamped_folder(base_dir, country_name, country_iso3)
+    else:
+        # Not in a timestamped folder, create one
+        output_dir = create_timestamped_folder(base_dir, country_name, country_iso3)
+
+    # Build simple filename without timestamp (folder has the timestamp)
+    filename = f"output_{mode}.{extension}"
 
     return str(output_dir / filename)

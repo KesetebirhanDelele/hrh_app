@@ -90,25 +90,52 @@ python -m app.app run-all --mode stub --country-name Ethiopia --country-iso3 ETH
 # Run all jobs with LLM
 python -m app.app run-all --mode llm --country-name Ethiopia --country-iso3 ETH --sources data/sources/eth_sources.json
 
-# Render all deliverables from existing outputs with timestamped filenames
+# Render all deliverables from existing outputs
 python -m app.app render-all --mode stub
 python -m app.app render-all --mode llm
 ```
 
-**Filename Format:** All output files (JSON, MD, DOCX, XLSX) include timestamps and country information:
-- Format: `output_{mode}_{country}_{timestamp}.{ext}`
-- Examples:
-  - `output_llm_ETH_20260208_042050.json` (JSON output)
-  - `output_stub_ETH_20260208_042050.xlsx` (rendered spreadsheet)
-  - `output_llm_ethiopia_20260208_042050.md` (rendered markdown)
-- Timestamps are in UTC (YYYYMMDD_HHMMSS)
+**Output Organization:** All outputs are organized in timestamped country folders:
 
-**Auto-Detection:** Country information is automatically detected from folder structure:
-- **Recommended folder structure:** `outputs/{job_id}/{country_name}/` or `outputs/{job_id}/{ISO3}/`
-  - Examples: `outputs/country_learning_briefs/Ethiopia/`, `outputs/table2_root_cause_mapping/ETH/`
-- When files are in country-specific folders, you don't need to specify `--country-name` or `--country-iso3`
-- The system detects country from any path component matching known country names or ISO3 codes
-- Manual `--country-name` and `--country-iso3` arguments override auto-detection
+**Folder Structure:**
+```
+outputs/
+  {job_id}/
+    {COUNTRY}_{TIMESTAMP}/
+      output_llm.json
+      output_llm.md
+      output_llm.docx
+      output_llm.xlsx
+```
+
+- `COUNTRY`: ISO3 code (ETH, KEN) or country name (Ethiopia, Kenya)
+- `TIMESTAMP`: UTC timestamp (YYYYMMDD_HHMMSS)
+- All files from a single run are grouped in one timestamped folder
+- Each run creates a new timestamped folder automatically
+
+**Example:**
+```
+outputs/
+  country_learning_briefs/
+    ETH_20260208_051534/
+      output_llm.json
+      output_llm.md
+      output_llm.docx
+  table2_root_cause_mapping/
+    Kenya_20260208_051528/
+      output_stub.json
+      output_stub.md
+      output_stub.xlsx
+    run_20260208_052010/      ← No country specified
+      output_llm.json
+      output_llm.xlsx
+```
+
+**Country Auto-Detection:**
+- If `--country-name` or `--country-iso3` is provided → folder uses that country
+- If not provided → auto-detects country from current folder path
+- If no country detected → folder named `run_{TIMESTAMP}`
+- Manual arguments always override auto-detection
 
 The `run-all` command:
 - Runs every job in the registry with the same parameters
@@ -117,7 +144,8 @@ The `run-all` command:
 
 The `render-all` command:
 - Renders deliverables for all jobs from existing output files
-- **Auto-generates timestamped filenames** with country information
+- Finds the most recent timestamped folder for each job
+- Outputs all rendered files to the same timestamped folder as the source JSON
 - Narrative jobs (phase1_discovery_qa, country_learning_briefs) → MD + DOCX
 - Table jobs (rrr_evidence_matrix, table2_root_cause_mapping, table3_intervention_framework, benchmark_country_scoring) → MD + XLSX
 - Skips jobs with missing output files

@@ -42,6 +42,23 @@ def test_llm_generalized_rrr_uses_schema_and_passes(monkeypatch: pytest.MonkeyPa
 
     assert exit_code == 0
 
-    out_path = Path("outputs/rrr_evidence_matrix/output_llm.json")
+    # Find the most recent timestamped folder
+    job_output_dir = Path("outputs/rrr_evidence_matrix")
+    matching_files = []
+    for folder in job_output_dir.iterdir():
+        if folder.is_dir():
+            json_file = folder / "output_llm.json"
+            if json_file.exists():
+                matching_files.append(json_file)
+
+    assert len(matching_files) > 0, "No output_llm.json found in timestamped folders"
+
+    # Get the most recent file
+    matching_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    out_path = matching_files[0]
+
     assert out_path.exists()
-    out_path.unlink(missing_ok=True)
+
+    # Clean up the entire timestamped folder
+    import shutil
+    shutil.rmtree(out_path.parent, ignore_errors=True)
