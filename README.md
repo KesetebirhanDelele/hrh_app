@@ -146,10 +146,137 @@ The `render-all` command:
 - Renders deliverables for all jobs from existing output files
 - Finds the most recent timestamped folder for each job
 - Outputs all rendered files to the same timestamped folder as the source JSON
-- Narrative jobs (phase1_discovery_qa, country_learning_briefs) → MD + DOCX
-- Table jobs (rrr_evidence_matrix, table2_root_cause_mapping, table3_intervention_framework, benchmark_country_scoring) → MD + XLSX
+- Narrative jobs (phase1_discovery_qa, country_learning_briefs) → DOCX only
+- Table jobs (rrr_evidence_matrix, table2_root_cause_mapping, table3_intervention_framework, benchmark_country_scoring) → XLSX only
 - Skips jobs with missing output files
 - Shows a summary of successes/skips/errors
+
+## Multi-Country Analysis
+
+### Single Country Workflow
+
+To run analysis for **one country**, follow this three-step workflow:
+
+**1. (Optional) Scan source files:**
+```powershell
+python -m app.app sources-scan --country-iso3 ETH
+```
+This auto-generates `data/sources/eth_sources.json` from files in `data/sources/ETH/pdf/` and `data/sources/ETH/docx/`.
+
+**2. Run all jobs with LLM:**
+```powershell
+$env:HRH_STRICT_CITATIONS = "1"
+python -m app.app run-all --mode llm `
+    --country-name Ethiopia `
+    --country-iso3 ETH `
+    --sources data/sources/eth_sources.json
+```
+
+**3. Render outputs (DOCX and XLSX):**
+```powershell
+python -m app.app render-all --mode llm `
+    --country-name Ethiopia `
+    --country-iso3 ETH
+```
+
+**Output location:**
+```
+outputs/
+  phase1_discovery_qa/
+    ETH_20260208_120000/
+      output_llm.json
+      output_llm.docx
+  table2_root_cause_mapping/
+    ETH_20260208_120100/
+      output_llm.json
+      output_llm.xlsx
+  ...
+```
+
+### Multi-Country Workflow
+
+To run analysis for **multiple countries**, use the provided PowerShell script with **automatic country discovery**:
+
+**1. Organize source documents:**
+
+Organize your source documents by ISO3 country code:
+```
+data/sources/
+├── ETH/
+│   ├── pdf/
+│   │   ├── document1.pdf
+│   │   └── document2.pdf
+│   └── docx/
+│       └── document3.docx
+├── KEN/
+│   ├── pdf/
+│   └── docx/
+└── UGA/
+    ├── pdf/
+    └── docx/
+```
+
+**Important:** Folder names MUST be valid ISO3 country codes (3 uppercase letters, e.g., ETH, KEN, UGA).
+
+**2. Run the script:**
+```powershell
+.\run_all_countries.ps1
+```
+
+The script will:
+- ✅ **Auto-discover** all country folders in `data/sources/`
+- ✅ Map ISO3 codes to country names (ETH → Ethiopia, KEN → Kenya, etc.)
+- ✅ Auto-generate source JSON files from PDF/DOCX documents
+- ✅ Process each country in sequence
+- ✅ Run all jobs with LLM for each country
+- ✅ Render all outputs (DOCX and XLSX)
+- ✅ Show progress and timing for each country
+- ✅ Display a final summary with success/failure status
+
+**No configuration needed!** Just add a new country folder with ISO3 code and run the script.
+
+**Output structure (multi-country):**
+```
+outputs/
+  phase1_discovery_qa/
+    ETH_20260208_120000/
+      output_llm.json
+      output_llm.docx
+    KEN_20260208_130000/
+      output_llm.json
+      output_llm.docx
+    UGA_20260208_140000/
+      output_llm.json
+      output_llm.docx
+  table2_root_cause_mapping/
+    ETH_20260208_120100/
+      output_llm.json
+      output_llm.xlsx
+    KEN_20260208_130100/
+      output_llm.json
+      output_llm.xlsx
+    UGA_20260208_140100/
+      output_llm.json
+      output_llm.xlsx
+  ...
+```
+
+Each country gets its own timestamped folders, making it easy to:
+- Compare outputs across countries
+- Track when each country was analyzed
+- Rerun individual countries without affecting others
+
+**Adding new countries:**
+To add a new country:
+1. Add the country's ISO3 code to the `$countryNames` mapping in the script (if not already present)
+2. Create a folder `data/sources/{ISO3}/` with `pdf/` and `docx/` subdirectories
+3. Add your source documents
+4. Run the script - it will automatically discover and process the new country
+
+**Customizing the script:**
+- Add new ISO3 → country name mappings in the `$countryNames` hashtable
+- Comment out the `sources-scan` step if your source JSON files are already prepared
+- Adjust error handling or add custom logic as needed
 
 ### 7. Run Tests
 

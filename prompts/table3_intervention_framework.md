@@ -27,6 +27,15 @@ For each intervention:
 - dependencies MUST be an array of strings.
 - risks MUST be an array of strings (or objects only if schema allows; otherwise strings).
 
+### EVIDENCE QUALITY VALUES (CRITICAL)
+The evidence.quality field MUST be one of these EXACT values:
+- "high" - Strong, direct evidence from multiple high-quality sources
+- "medium" - Moderate evidence with some limitations (NOT "moderate")
+- "low" - Weak or indirect evidence
+- "none" - No evidence found in allowed sources (use NoEvidence)
+
+CRITICAL: Use "medium" NOT "moderate". Any other value will fail validation.
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)

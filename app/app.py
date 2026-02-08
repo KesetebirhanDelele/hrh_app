@@ -247,18 +247,21 @@ def cmd_render_all(args: argparse.Namespace) -> int:
         print(f"[{job_id}] Using: {input_file.parent.name}/{input_file.name}")
 
         try:
-            # Narrative jobs -> MD + DOCX
+            # Narrative jobs -> DOCX only
             if job_id in ("phase1_discovery_qa", "country_learning_briefs"):
                 # Generate auto-named outputs with timestamps
-                md_out = auto_output_name(str(input_file), "md", country_name, country_iso3)
-                docx_out = auto_output_name(str(input_file), "docx", country_name, country_iso3)
+                docx_out = auto_output_name(
+                    str(input_file),
+                    "docx",
+                    mode=mode,
+                    country_name=country_name,
+                    country_iso3=country_iso3
+                )
 
-                md_path = render_md_file(job_id, str(input_file), md_out)
                 docx_path = render_docx_file(job_id, str(input_file), docx_out)
-                print(f"[{job_id}] Wrote: {md_path}")
                 print(f"[{job_id}] Wrote: {docx_path}")
 
-            # Table jobs -> MD + XLSX
+            # Table jobs -> XLSX only
             elif job_id in (
                 "rrr_evidence_matrix",
                 "table2_root_cause_mapping",
@@ -266,12 +269,15 @@ def cmd_render_all(args: argparse.Namespace) -> int:
                 "benchmark_country_scoring",
             ):
                 # Generate auto-named outputs with timestamps
-                md_out = auto_output_name(str(input_file), "md", country_name, country_iso3)
-                xlsx_out = auto_output_name(str(input_file), "xlsx", country_name, country_iso3)
+                xlsx_out = auto_output_name(
+                    str(input_file),
+                    "xlsx",
+                    mode=mode,
+                    country_name=country_name,
+                    country_iso3=country_iso3
+                )
 
-                md_path = render_md_file(job_id, str(input_file), md_out)
                 xlsx_path = render_xlsx_file(job_id, str(input_file), xlsx_out)
-                print(f"[{job_id}] Wrote: {md_path}")
                 print(f"[{job_id}] Wrote: {xlsx_path}")
 
             else:
