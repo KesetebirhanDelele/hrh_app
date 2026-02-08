@@ -9,6 +9,7 @@ from app.analyze.extractors import extract_phase1_questions
 from app.analyze.prompting import _read_json
 from app.core.validators import validate_output
 from app.jobs.registry import get_job
+from app.utils import auto_output_name
 
 
 def run_phase1_stub(spec_id: str, country_name: str, country_iso3: str | None = None) -> Path:
@@ -41,7 +42,14 @@ def run_phase1_stub(spec_id: str, country_name: str, country_iso3: str | None = 
         )
 
     job.output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = job.output_dir / "output_stub.json"
+    out_filename = auto_output_name(
+        job.output_dir,
+        "json",
+        mode="stub",
+        country_name=country_name,
+        country_iso3=country_iso3,
+    )
+    out_path = Path(out_filename)
     out_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # Validate immediately (deterministic gate)

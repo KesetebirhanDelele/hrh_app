@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Tuple
 from app.analyze.prompting import _read_json
 from app.core.validators import validate_output
 from app.jobs.registry import get_job
+from app.utils import auto_output_name
 
 
 def _extract_dimensions_and_countries(spec: Dict[str, Any]) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
@@ -102,7 +103,8 @@ def run_benchmark_stub(spec_id: str) -> Path:
         )
 
     job.output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = job.output_dir / "output_stub.json"
+    out_filename = auto_output_name(job.output_dir, "json", mode="stub")
+    out_path = Path(out_filename)
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     schema_rel = str(job.output_schema.relative_to(Path.cwd()))

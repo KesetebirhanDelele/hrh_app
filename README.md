@@ -65,14 +65,18 @@ python -m app.app run --job phase1_discovery_qa --mode stub --spec-id test_spec 
 ### 5. Render Outputs
 
 ```bash
-# Markdown (all jobs)
-python -m app.app render-md --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json
+# Markdown (all jobs) - auto-detects country from folder structure
+python -m app.app render-md --job phase1_discovery_qa --file outputs/phase1_discovery_qa/Ethiopia/output_llm_ETH_20260208_123456.json
 
 # Excel (table jobs: rrr, table2, table3, benchmark)
-python -m app.app render-xlsx --job rrr_evidence_matrix --file outputs/rrr_evidence_matrix/output_llm.json
+python -m app.app render-xlsx --job rrr_evidence_matrix --file outputs/rrr_evidence_matrix/ETH/output_llm_ETH_20260208_123456.json
 
 # Word (narrative jobs: phase1, learning_briefs)
-python -m app.app render-docx --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json
+python -m app.app render-docx --job phase1_discovery_qa --file outputs/phase1_discovery_qa/Ethiopia/output_llm_ETH_20260208_123456.json
+
+# All render commands auto-generate timestamped output filenames
+# Country info is auto-detected from folder paths, or specify manually:
+python -m app.app render-md --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json --country-name Ethiopia --country-iso3 ETH
 ```
 
 ### 6. Batch Operations
@@ -86,10 +90,25 @@ python -m app.app run-all --mode stub --country-name Ethiopia --country-iso3 ETH
 # Run all jobs with LLM
 python -m app.app run-all --mode llm --country-name Ethiopia --country-iso3 ETH --sources data/sources/eth_sources.json
 
-# Render all deliverables from existing outputs
-python -m app.app render-all --mode stub  # renders from output_stub.json files
-python -m app.app render-all --mode llm   # renders from output_llm.json files
+# Render all deliverables from existing outputs with timestamped filenames
+python -m app.app render-all --mode stub
+python -m app.app render-all --mode llm
 ```
+
+**Filename Format:** All output files (JSON, MD, DOCX, XLSX) include timestamps and country information:
+- Format: `output_{mode}_{country}_{timestamp}.{ext}`
+- Examples:
+  - `output_llm_ETH_20260208_042050.json` (JSON output)
+  - `output_stub_ETH_20260208_042050.xlsx` (rendered spreadsheet)
+  - `output_llm_ethiopia_20260208_042050.md` (rendered markdown)
+- Timestamps are in UTC (YYYYMMDD_HHMMSS)
+
+**Auto-Detection:** Country information is automatically detected from folder structure:
+- **Recommended folder structure:** `outputs/{job_id}/{country_name}/` or `outputs/{job_id}/{ISO3}/`
+  - Examples: `outputs/country_learning_briefs/Ethiopia/`, `outputs/table2_root_cause_mapping/ETH/`
+- When files are in country-specific folders, you don't need to specify `--country-name` or `--country-iso3`
+- The system detects country from any path component matching known country names or ISO3 codes
+- Manual `--country-name` and `--country-iso3` arguments override auto-detection
 
 The `run-all` command:
 - Runs every job in the registry with the same parameters
@@ -98,6 +117,7 @@ The `run-all` command:
 
 The `render-all` command:
 - Renders deliverables for all jobs from existing output files
+- **Auto-generates timestamped filenames** with country information
 - Narrative jobs (phase1_discovery_qa, country_learning_briefs) → MD + DOCX
 - Table jobs (rrr_evidence_matrix, table2_root_cause_mapping, table3_intervention_framework, benchmark_country_scoring) → MD + XLSX
 - Skips jobs with missing output files
