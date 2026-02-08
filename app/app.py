@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.validators import SchemaValidationError, validate_output
@@ -19,6 +21,60 @@ def _read_json(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
         raise ValueError(f"Failed to read JSON file '{path}': {e}") from e
+
+
+def _slugify(s: str) -> str:
+    """Convert a string to a filesystem-safe slug."""
+    s = s.lower().strip()
+    s = re.sub(r'[^\w\s-]', '', s)
+    s = re.sub(r'[\s_-]+', '_', s)
+    return s
+
+
+def _auto_output_name(input_file: str, extension: str, country_name: str | None = None, country_iso3: str | None = None) -> str:
+    """
+    Generate auto-output filename based on input file, country info, and timestamp.
+
+    Args:
+        input_file: Path to input JSON file
+        extension: Output extension (e.g., 'md', 'xlsx', 'docx')
+        country_name: Optional country name
+        country_iso3: Optional ISO3 country code
+
+    Returns:
+        Full path to auto-generated output file
+    """
+    input_path = Path(input_file)
+    input_stem = input_path.stem
+
+    # Infer mode from input filename
+    if "output_llm" in input_stem:
+        mode_token = "llm"
+    elif "output_stub" in input_stem:
+        mode_token = "stub"
+    else:
+        mode_token = "out"
+
+    # Get country token
+    country_token = ""
+    if country_iso3:
+        country_token = country_iso3.upper()
+    elif country_name:
+        country_token = _slugify(country_name)
+
+    # Generate timestamp
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    # Build filename
+    parts = ["output", mode_token]
+    if country_token:
+        parts.append(country_token)
+    parts.append(stamp)
+
+    filename = "_".join(parts) + f".{extension}"
+
+    # Output to same directory as input file
+    return str(input_path.parent / filename)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -335,6 +391,51 @@ def cmd_sources_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render_md(args: argparse.Namespace) -> int:
+    """Render markdown with auto-generated output name if --out not provided."""
+    out_path = args.out
+    if not out_path:
+        out_path = _auto_output_name(
+            args.file,
+            "md",
+            getattr(args, "country_name", None),
+            getattr(args, "country_iso3", None)
+        )
+    result = render_md_file(args.job, args.file, out_path)
+    print(f"Wrote: {result}")
+    return 0
+
+
+def cmd_render_xlsx(args: argparse.Namespace) -> int:
+    """Render xlsx with auto-generated output name if --out not provided."""
+    out_path = args.out
+    if not out_path:
+        out_path = _auto_output_name(
+            args.file,
+            "xlsx",
+            getattr(args, "country_name", None),
+            getattr(args, "country_iso3", None)
+        )
+    result = render_xlsx_file(args.job, args.file, out_path)
+    print(f"Wrote: {result}")
+    return 0
+
+
+def cmd_render_docx(args: argparse.Namespace) -> int:
+    """Render docx with auto-generated output name if --out not provided."""
+    out_path = args.out
+    if not out_path:
+        out_path = _auto_output_name(
+            args.file,
+            "docx",
+            getattr(args, "country_name", None),
+            getattr(args, "country_iso3", None)
+        )
+    result = render_docx_file(args.job, args.file, out_path)
+    print(f"Wrote: {result}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="hrh_app")
     sub = p.add_subparsers(dest="command", required=True)
@@ -372,20 +473,26 @@ def build_parser() -> argparse.ArgumentParser:
     m = sub.add_parser("render-md", help="Render a validated output JSON to Markdown")
     m.add_argument("--job", required=True, help="Job id")
     m.add_argument("--file", required=True, help="Path to output JSON file")
-    m.add_argument("--out", default=None, help="Optional output .md path")
-    m.set_defaults(func=lambda args: (print(f'Wrote: {render_md_file(args.job, args.file, args.out)}') or 0))
+    m.add_argument("--out", default=None, help="Optional output .md path (auto-generated if not provided)")
+    m.add_argument("--country-name", default=None, help="Country name (for auto-generated filename)")
+    m.add_argument("--country-iso3", default=None, help="ISO3 country code (for auto-generated filename)")
+    m.set_defaults(func=cmd_render_md)
 
     x = sub.add_parser("render-xlsx", help="Render a validated output JSON to XLSX (table jobs)")
     x.add_argument("--job", required=True, help="Job id")
     x.add_argument("--file", required=True, help="Path to output JSON file")
-    x.add_argument("--out", default=None, help="Optional output .xlsx path")
-    x.set_defaults(func=lambda args: (print(f'Wrote: {render_xlsx_file(args.job, args.file, args.out)}') or 0))
+    x.add_argument("--out", default=None, help="Optional output .xlsx path (auto-generated if not provided)")
+    x.add_argument("--country-name", default=None, help="Country name (for auto-generated filename)")
+    x.add_argument("--country-iso3", default=None, help="ISO3 country code (for auto-generated filename)")
+    x.set_defaults(func=cmd_render_xlsx)
 
     d = sub.add_parser("render-docx", help="Render a validated output JSON to DOCX (narrative jobs)")
     d.add_argument("--job", required=True, help="Job id")
     d.add_argument("--file", required=True, help="Path to output JSON file")
-    d.add_argument("--out", default=None, help="Optional output .docx path")
-    d.set_defaults(func=lambda args: (print(f'Wrote: {render_docx_file(args.job, args.file, args.out)}') or 0))
+    d.add_argument("--out", default=None, help="Optional output .docx path (auto-generated if not provided)")
+    d.add_argument("--country-name", default=None, help="Country name (for auto-generated filename)")
+    d.add_argument("--country-iso3", default=None, help="ISO3 country code (for auto-generated filename)")
+    d.set_defaults(func=cmd_render_docx)
 
     return p
 

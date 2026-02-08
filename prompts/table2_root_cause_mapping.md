@@ -12,11 +12,14 @@ Output MUST be valid JSON ONLY that validates against:
 
 ## Grounding requirements (CRITICAL)
 For each framework item:
-- definition MUST be concise and operational (how it manifests in practice).
-- evidence.rationale MUST explain whether the definition is:
-  - directly supported by allowed_sources (preferred), OR
-  - a general/standard HRH concept not explicitly stated in allowed_sources (then use NoEvidence).
-- locator MUST be specific (page/section/table/figure). Avoid “general discussion”.
+- definition MUST be concise, operational, and evidence-grounded (how it manifests in practice based on source context).
+- If allowed_sources are provided, try to ground definitions in source context:
+  - Look for examples, case studies, or contextual information in sources that illustrate the root cause
+  - Synthesize information from multiple sources if needed
+  - Direct quotes supporting the definition are strongly preferred
+- evidence.rationale MUST explain how the definition is grounded in sources
+- Only use NoEvidence if you genuinely cannot find ANY relevant context in allowed_sources
+- locator MUST be specific (page/section/table/figure). Avoid "general discussion" or "entire document".
 
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
@@ -36,10 +39,14 @@ If you have no citations after applying the rule, you MUST use NoEvidence (quali
 
 ### ALLOWED SOURCES POLICY
 If `allowed_sources` are provided in inputs:
-- Every citation MUST include:
-  - source_id: must match one of allowed_sources[].source_id
-- You may ONLY cite from allowed_sources.
-- If allowed_sources do not support the item, use NoEvidence.
+- Every citation MUST include `source_id` matching one of `allowed_sources[].source_id` (e.g., SRC1, SRC2)
+- You may ONLY cite from `allowed_sources`. Do not invent or reference sources outside this list.
+- Look for ANY relevant information in allowed_sources that helps ground the definition:
+  - Examples, case studies, or contextual descriptions
+  - Evidence of the root cause manifesting in practice
+  - Related factors or mechanisms mentioned in sources
+- Use EvidenceNote when sources provide relevant context, even if indirect
+- Only use NoEvidence if you truly cannot find ANY relevant information in the allowed sources
 
 ## Inputs you will receive
 - spec_id (string)
@@ -55,9 +62,21 @@ If `allowed_sources` are provided in inputs:
       "item_id": "...",
       "category": "...",
       "root_cause": "...",
-      "definition": "...",
-      "evidence": { "quality": "none", "rationale": "...", "citations": [] },
-      "tags": []
+      "definition": "Operational definition grounded in source context...",
+      "evidence": {
+        "quality": "medium",
+        "rationale": "Grounded in [source context/examples]...",
+        "citations": [
+          {
+            "source_id": "SRC1",
+            "source_title": "...",
+            "locator": "Page X, Section Y",
+            "reference": "...",
+            "quote": "Relevant excerpt supporting the definition..."
+          }
+        ]
+      },
+      "tags": ["relevant", "tags"]
     }
   ]
 }

@@ -19,6 +19,14 @@ For each intervention:
 - evidence.rationale MUST specify what the evidence supports (e.g., improved attendance, motivation, service quality) and the limits.
 - If the intervention is plausible but not supported in allowed_sources, use NoEvidence (do not fabricate).
 
+### Field type constraints (STRICT)
+- implementation_notes MUST be a single STRING (not a list/array).
+  - If you need bullets, embed them inside the string using newlines, e.g.:
+    "implementation_notes": "- Step 1...\n- Step 2...\n- Step 3..."
+- mechanism MUST be a string.
+- dependencies MUST be an array of strings.
+- risks MUST be an array of strings (or objects only if schema allows; otherwise strings).
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)
@@ -58,7 +66,7 @@ If `allowed_sources` are provided in inputs:
       "intervention": "...",
       "mechanism": "...",
       "evidence": { "quality": "none", "rationale": "...", "citations": [] },
-      "implementation_notes": "",
+      "implementation_notes": "- Step 1...\n- Step 2...\n- Step 3...",
       "dependencies": [],
       "risks": []
     }
