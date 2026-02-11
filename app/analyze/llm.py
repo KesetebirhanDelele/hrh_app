@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,7 @@ def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[s
     if not api_key:
         raise LLMNotConfigured("Missing OPENAI_API_KEY. Set it in your environment.")
 
-    model = model or os.getenv("HRH_OPENAI_MODEL", "gpt-4o-mini")
+    model = model or os.getenv("HRH_OPENAI_MODEL", "gpt-4o")
 
     client = OpenAI(api_key=api_key)
 
@@ -53,14 +54,24 @@ def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[s
     if repair_instructions:
         system_text += "\n\nVALIDATION ERRORS TO FIX:\n" + repair_instructions
 
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_text},
-            {"role": "user", "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
+    max_retries = 5
+    for retry in range(max_retries):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_text},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+            break
+        except RateLimitError as e:
+            if retry == max_retries - 1:
+                raise
+            wait = min(2 ** retry * 30, 120)  # 30s, 60s, 120s, 120s
+            print(f"  Rate limited, waiting {wait}s before retry ({retry + 1}/{max_retries})...")
+            time.sleep(wait)
 
     # Extract text from response
     text = (resp.choices[0].message.content or "").strip()

@@ -12,6 +12,9 @@ from app.jobs.registry import get_job, load_registry
 from app.render.md import render_md_file
 from app.render.xlsx import render_xlsx_file
 from app.render.docx import render_docx_file
+from app.ingest.loader import extract_pdf, extract_docx
+from app.ingest.chunker import chunk_snippets
+from app.ingest.indexer import build_index, load_index
 from app.utils import auto_output_name
 
 
@@ -69,17 +72,32 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if args.mode == "llm":
         from app.analyze.llm import LLMNotConfigured, generate_json
-        from app.analyze.prompting import render_prompt_for_job
+        from app.analyze.prompting import render_prompt_for_job, render_prompt_with_rag
+        from app.analyze.merger import merge_outputs
+        from app.analyze.extractors import (
+            extract_phase1_questions,
+            extract_rrr_solutions,
+            extract_table2_items,
+            extract_table3_items,
+            extract_learning_domains,
+            extract_benchmark_dimensions_countries,
+        )
         import json as _json
+        import tempfile
+        import time
 
         job = get_job(args.job)
-
-        # Extract allowed source IDs if sources provided
         sources_path = getattr(args, "sources", None)
+        index_path = getattr(args, "index", None)
+        no_split = getattr(args, "no_split", False)
+
+        # Load sources and set up allowed-IDs for validation
+        all_sources: list[dict] = []
         if sources_path:
             try:
                 sources_data = _read_json(Path(sources_path))
-                allowed_ids = [src.get("source_id") for src in sources_data.get("sources", []) if src.get("source_id")]
+                all_sources = sources_data.get("sources", [])
+                allowed_ids = [src.get("source_id") for src in all_sources if src.get("source_id")]
                 if allowed_ids:
                     os.environ["HRH_ALLOWED_SOURCE_IDS"] = ",".join(allowed_ids)
                     os.environ["HRH_ENFORCE_ALLOWED_SOURCES"] = "1"
@@ -87,72 +105,380 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"Warning: Could not load sources for validation: {e}", file=sys.stderr)
 
         try:
-            rendered_prompt = render_prompt_for_job(
-                job_id=args.job,
-                template_path=str(job.prompt_template),
-                spec_path=str(job.spec_file),
-                spec_id=args.spec_id,
-                country_name=getattr(args, "country_name", None),
-                country_iso3=getattr(args, "country_iso3", None),
-                sources_path=sources_path,
-            )
-        except Exception as e:
-            print(str(e), file=sys.stderr)
-            return 2
-
-        try:
             schema_rel = str(job.output_schema.relative_to(Path.cwd()))
         except Exception:
             schema_rel = str(job.output_schema)
 
         job.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Generate auto-named JSON output with timestamp and country
         out_filename = auto_output_name(
-            job.output_dir,
-            "json",
-            mode="llm",
+            job.output_dir, "json", mode="llm",
             country_name=getattr(args, "country_name", None),
             country_iso3=getattr(args, "country_iso3", None),
         )
         out_path = Path(out_filename)
 
-        max_attempts = 3  # initial + 2 repairs
-        repair_notes = None
+        # ── RAG mode: per-question/item retrieval ──────────────────────
+        if index_path:
+            print(f"  RAG mode: loading index from {index_path}")
+            index_data = load_index(index_path)
+            print(f"  Index has {index_data.get('snippet_count', '?')} snippets")
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                llm = generate_json(rendered_prompt, repair_instructions=repair_notes)
-            except LLMNotConfigured as e:
-                print(str(e), file=sys.stderr)
-                return 2
+            spec = _read_json(Path(str(job.spec_file)))
+            top_k = int(os.getenv("HRH_RAG_TOP_K", "20"))
+            country_name = getattr(args, "country_name", None)
+            country_iso3 = getattr(args, "country_iso3", None)
 
-            try:
-                payload = _json.loads(llm.text)
-            except Exception as e:
-                repair_notes = f"Your output was not valid JSON. Error: {e}"
-                if attempt == max_attempts:
-                    print(repair_notes, file=sys.stderr)
+            # Extract items to iterate over based on job type
+            items_with_queries = _extract_rag_items(
+                args.job, spec, country_name, country_iso3
+            )
+
+            rag_delay = int(os.getenv("HRH_RAG_DELAY_SECS", "65"))
+            print(f"  Processing {len(items_with_queries)} items via RAG (delay={rag_delay}s between calls)...")
+            all_item_results: list[dict] = []
+
+            for item_idx, (query_text, item_inputs) in enumerate(items_with_queries, 1):
+                # Pause between calls to respect TPM limits
+                if item_idx > 1 and rag_delay > 0:
+                    print(f"  Waiting {rag_delay}s for rate limit window...")
+                    import time
+                    time.sleep(rag_delay)
+
+                item_label = query_text[:60].replace("\n", " ")
+                print(f"  [{item_idx}/{len(items_with_queries)}] {item_label}...")
+
+                rendered_prompt = render_prompt_with_rag(
+                    job_id=args.job,
+                    template_path=str(job.prompt_template),
+                    spec_path=str(job.spec_file),
+                    spec_id=args.spec_id,
+                    query_text=query_text,
+                    index_data=index_data,
+                    top_k=top_k,
+                    country_name=country_name,
+                    country_iso3=country_iso3,
+                    item_inputs=item_inputs,
+                )
+
+                # LLM call — skip per-item schema validation (partial output won't
+                # match the full schema; only the merged result is validated)
+                payload = _llm_call_with_retry(
+                    rendered_prompt, generate_json, LLMNotConfigured, _json
+                )
+                if payload is None:
+                    print(f"  Warning: no valid output for item {item_idx}", file=sys.stderr)
+                    continue
+
+                all_item_results.append(_clean_citations(payload))
+
+            if not all_item_results:
+                print("No valid outputs produced.", file=sys.stderr)
+                return 3
+
+            # Merge all per-item results into a single output
+            if len(all_item_results) == 1:
+                final_payload = all_item_results[0]
+            else:
+                try:
+                    final_payload = merge_outputs(args.job, all_item_results)
+                except Exception as e:
+                    print(f"Merge failed: {e}", file=sys.stderr)
                     return 3
-                continue
 
-            out_path.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            out_path.write_text(
+                _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
             try:
-                validate_output(payload, schema_rel)
+                validate_output(final_payload, schema_rel)
                 print(f"Wrote: {out_path}")
                 print("VALID ✅")
                 return 0
             except Exception as e:
-                repair_notes = str(e)
-                if attempt == max_attempts:
-                    print(repair_notes, file=sys.stderr)
-                    print(f"Wrote (invalid): {out_path}", file=sys.stderr)
-                    return 3
-                continue
+                print(str(e), file=sys.stderr)
+                print(f"Wrote (invalid): {out_path}", file=sys.stderr)
+                return 3
+
+        # ── Legacy mode: per-source splitting ──────────────────────────
+        # Determine source batches: per-source or single call
+        sources_with_snippets = [s for s in all_sources if s.get("snippets")]
+        sources_without_snippets = [s for s in all_sources if not s.get("snippets")]
+
+        if not sources_path or no_split or len(sources_with_snippets) <= 1:
+            # Single-call mode (original behavior)
+            source_batches = [all_sources] if all_sources else [None]
+        else:
+            # Per-source mode: one batch per source that has snippets
+            source_batches = [[src] + sources_without_snippets for src in sources_with_snippets]
+
+        partial_outputs: list[dict] = []
+        total_batches = len(source_batches)
+
+        for batch_idx, batch in enumerate(source_batches, start=1):
+            if batch and total_batches > 1:
+                src_name = batch[0].get("source_title", "unknown")[:50]
+                print(f"  Source {batch_idx}/{total_batches}: {src_name}")
+
+            # Write temporary sources file for this batch
+            tmp_sources_path = None
+            if batch is not None:
+                tmp_file = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".json", delete=False, encoding="utf-8"
+                )
+                _json.dump({"sources": batch}, tmp_file, ensure_ascii=False, indent=2)
+                tmp_file.close()
+                tmp_sources_path = tmp_file.name
+
+            try:
+                rendered_prompt = render_prompt_for_job(
+                    job_id=args.job,
+                    template_path=str(job.prompt_template),
+                    spec_path=str(job.spec_file),
+                    spec_id=args.spec_id,
+                    country_name=getattr(args, "country_name", None),
+                    country_iso3=getattr(args, "country_iso3", None),
+                    sources_path=tmp_sources_path or sources_path,
+                )
+            except Exception as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            finally:
+                if tmp_sources_path:
+                    Path(tmp_sources_path).unlink(missing_ok=True)
+
+            payload = _llm_call_with_retry(
+                rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel
+            )
+            if payload is None:
+                print(f"  Warning: no valid output for batch {batch_idx}", file=sys.stderr)
+            else:
+                partial_outputs.append(payload)
+
+            # Pause between per-source calls to respect TPM limits
+            if total_batches > 1 and batch_idx < total_batches:
+                delay = int(os.getenv("HRH_CALL_DELAY_SECS", "65"))
+                print(f"  Waiting {delay}s for rate limit window...")
+                time.sleep(delay)
+
+        if not partial_outputs:
+            print("No valid outputs produced.", file=sys.stderr)
+            return 3
+
+        # Merge if multiple partial outputs
+        if len(partial_outputs) == 1:
+            final_payload = partial_outputs[0]
+        else:
+            try:
+                final_payload = merge_outputs(args.job, partial_outputs)
+            except Exception as e:
+                print(f"Merge failed: {e}", file=sys.stderr)
+                return 3
+
+        out_path.write_text(
+            _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        try:
+            validate_output(final_payload, schema_rel)
+            print(f"Wrote: {out_path}")
+            print("VALID ✅")
+            return 0
+        except Exception as e:
+            print(str(e), file=sys.stderr)
+            print(f"Wrote (invalid): {out_path}", file=sys.stderr)
+            return 3
 
     print(f"Unknown mode: {args.mode}", file=sys.stderr)
     return 2
+
+
+def _clean_citations(payload: dict) -> dict:
+    """Strip invalid optional fields from citations in LLM output.
+
+    The LLM sometimes emits empty strings, nulls, or malformed values for
+    optional citation fields (source_url, published_date, doi, isbn, etc.).
+    Removing these prevents schema validation failures while preserving all
+    valid data.
+    """
+    import re
+    ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    OPTIONAL_STRING_FIELDS = [
+        "source_url", "doi", "isbn", "reference", "authors",
+        "publisher", "source_type", "quote",
+    ]
+
+    def _clean_citation(cit: dict) -> dict:
+        cleaned = {}
+        for k, v in cit.items():
+            # Drop null values entirely
+            if v is None:
+                continue
+            # Drop empty strings for optional string fields
+            if k in OPTIONAL_STRING_FIELDS and isinstance(v, str) and not v.strip():
+                continue
+            # Validate published_date format
+            if k == "published_date":
+                if not isinstance(v, str) or not ISO_DATE_RE.match(v):
+                    continue
+            # Validate source_url is a real URL (not hallucinated)
+            if k == "source_url":
+                if not isinstance(v, str) or not v.startswith("http"):
+                    continue
+                if "example.com" in v:
+                    continue
+            cleaned[k] = v
+        return cleaned
+
+    def _walk(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            if "citations" in obj and isinstance(obj["citations"], list):
+                obj["citations"] = [_clean_citation(c) for c in obj["citations"]]
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+        return obj
+
+    return _walk(payload)
+
+
+def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel=None):
+    """Call the LLM with up to 3 repair attempts. Returns parsed payload or None.
+
+    When schema_rel is None, schema validation is skipped (useful for per-item
+    RAG calls where each item is a partial output that won't match the full schema).
+    """
+    from app.core.validators import validate_output
+
+    max_attempts = 3 if schema_rel else 1
+    repair_notes = None
+    payload = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            llm = generate_json(rendered_prompt, repair_instructions=repair_notes)
+        except LLMNotConfigured as e:
+            print(str(e), file=sys.stderr)
+            return None
+
+        try:
+            payload = _json.loads(llm.text)
+        except Exception as e:
+            repair_notes = f"Your output was not valid JSON. Error: {e}"
+            if attempt == max_attempts:
+                print(repair_notes, file=sys.stderr)
+                break
+            continue
+
+        if schema_rel is None:
+            return payload
+
+        try:
+            validate_output(payload, schema_rel)
+            return payload
+        except Exception as e:
+            repair_notes = str(e)
+            if attempt == max_attempts:
+                print(f"  Warning: output invalid after {max_attempts} attempts", file=sys.stderr)
+            continue
+
+    return payload  # may be invalid but best effort
+
+
+def _extract_rag_items(
+    job_id: str, spec: dict, country_name: str | None, country_iso3: str | None
+) -> list[tuple[str, dict]]:
+    """Extract (query_text, item_inputs) pairs for RAG per-item processing.
+
+    Each tuple contains:
+      - query_text: the text to embed and search against the index
+      - item_inputs: dict of inputs to pass to render_prompt_with_rag
+    """
+    from app.analyze.extractors import (
+        extract_phase1_questions,
+        extract_rrr_solutions,
+        extract_table2_items,
+        extract_table3_items,
+        extract_learning_domains,
+        extract_benchmark_dimensions_countries,
+    )
+
+    items: list[tuple[str, dict]] = []
+
+    if job_id == "phase1_discovery_qa":
+        questions = extract_phase1_questions(spec)
+        for q in questions:
+            query = q.question
+            item_inputs = {
+                "country_name": country_name,
+                "country_iso3": country_iso3,
+                "questions": [{"question_id": q.question_id, "question": q.question}],
+            }
+            items.append((query, item_inputs))
+
+    elif job_id == "rrr_evidence_matrix":
+        sols = extract_rrr_solutions(spec)
+        for s in sols:
+            query = f"{s.solution} — {s.mechanism}"
+            item_inputs = {
+                "solutions": [{"solution_id": s.solution_id, "solution": s.solution, "mechanism": s.mechanism}],
+            }
+            items.append((query, item_inputs))
+
+    elif job_id == "table2_root_cause_mapping":
+        framework_items = extract_table2_items(spec)
+        for it in framework_items:
+            query = f"{it.category}: {it.root_cause} — {it.definition}"
+            item_inputs = {
+                "framework_items": [{
+                    "item_id": it.item_id,
+                    "category": it.category,
+                    "root_cause": it.root_cause,
+                    "definition": it.definition,
+                }],
+            }
+            items.append((query, item_inputs))
+
+    elif job_id == "table3_intervention_framework":
+        interventions = extract_table3_items(spec)
+        for it in interventions:
+            query = f"{it.lever}: {it.intervention} — {it.mechanism}"
+            item_inputs = {
+                "interventions": [{
+                    "intervention_id": it.intervention_id,
+                    "lever": it.lever,
+                    "intervention": it.intervention,
+                    "mechanism": it.mechanism,
+                }],
+            }
+            items.append((query, item_inputs))
+
+    elif job_id == "benchmark_country_scoring":
+        dims, countries = extract_benchmark_dimensions_countries(spec)
+        # For benchmarking, send all dimensions + countries as one query
+        query = "HRH benchmarking: " + ", ".join(d.label for d in dims)
+        item_inputs = {
+            "dimensions": [{"dimension_id": d.dimension_id, "label": d.label} for d in dims],
+            "countries": [{"country_name": c.country_name, "iso3": c.iso3} for c in countries],
+        }
+        items.append((query, item_inputs))
+
+    elif job_id == "country_learning_briefs":
+        domains = extract_learning_domains(spec)
+        for d in domains:
+            query = f"Learning domain: {d.domain}"
+            item_inputs = {
+                "country_name": country_name,
+                "country_iso3": country_iso3,
+                "learning_domains": [{"domain_id": d.domain_id, "domain": d.domain}],
+            }
+            items.append((query, item_inputs))
+
+    else:
+        raise KeyError(f"_extract_rag_items: unsupported job_id '{job_id}'")
+
+    return items
 
 
 def cmd_run_all(args: argparse.Namespace) -> int:
@@ -181,6 +507,8 @@ def cmd_run_all(args: argparse.Namespace) -> int:
             country_name=country_name,
             country_iso3=country_iso3,
             sources=sources_path,
+            no_split=getattr(args, "no_split", False),
+            index=getattr(args, "index", None),
         )
 
         try:
@@ -314,6 +642,7 @@ def cmd_render_all(args: argparse.Namespace) -> int:
 
 def cmd_sources_scan(args: argparse.Namespace) -> int:
     iso3 = args.country_iso3.upper()
+    do_extract = not getattr(args, "no_extract", False)
     sources_dir = Path("data/sources").resolve()
 
     # Scan directories
@@ -322,19 +651,31 @@ def cmd_sources_scan(args: argparse.Namespace) -> int:
 
     sources = []
     source_counter = 1
+    total_snippets = 0
 
     # Scan PDF files
     if pdf_dir.exists():
         for pdf_file in sorted(pdf_dir.glob("*.pdf")):
             source_title = pdf_file.stem  # filename without extension
             rel_path = pdf_file.relative_to(Path.cwd().resolve())
+            snippets: list[dict] = []
+
+            if do_extract:
+                try:
+                    raw = extract_pdf(pdf_file)
+                    snippets = [dict(s) for s in chunk_snippets(raw)]
+                    print(f"  Extracted {len(snippets)} snippet(s) from {pdf_file.name}")
+                except Exception as exc:
+                    print(f"  WARNING: failed to extract {pdf_file.name}: {exc}", file=sys.stderr)
+
+            total_snippets += len(snippets)
             sources.append({
                 "source_id": f"SRC{source_counter}",
                 "source_title": source_title,
                 "source_type": "pdf",
                 "file_path": str(rel_path).replace("\\", "/"),
                 "reference": f"{source_title} (PDF document)",
-                "snippets": []
+                "snippets": snippets
             })
             source_counter += 1
 
@@ -343,13 +684,24 @@ def cmd_sources_scan(args: argparse.Namespace) -> int:
         for docx_file in sorted(docx_dir.glob("*.docx")):
             source_title = docx_file.stem
             rel_path = docx_file.relative_to(Path.cwd().resolve())
+            snippets = []
+
+            if do_extract:
+                try:
+                    raw = extract_docx(docx_file)
+                    snippets = [dict(s) for s in chunk_snippets(raw)]
+                    print(f"  Extracted {len(snippets)} snippet(s) from {docx_file.name}")
+                except Exception as exc:
+                    print(f"  WARNING: failed to extract {docx_file.name}: {exc}", file=sys.stderr)
+
+            total_snippets += len(snippets)
             sources.append({
                 "source_id": f"SRC{source_counter}",
                 "source_title": source_title,
                 "source_type": "docx",
                 "file_path": str(rel_path).replace("\\", "/"),
                 "reference": f"{source_title} (DOCX document)",
-                "snippets": []
+                "snippets": snippets
             })
             source_counter += 1
 
@@ -369,9 +721,27 @@ def cmd_sources_scan(args: argparse.Namespace) -> int:
         encoding="utf-8"
     )
 
-    print(f"Scanned {len(sources)} file(s)")
+    print(f"Scanned {len(sources)} file(s), extracted {total_snippets} total snippet(s)")
     print(f"Wrote: {output_file}")
     return 0
+
+
+def cmd_sources_index(args: argparse.Namespace) -> int:
+    """Build an embedding index from a sources JSON file."""
+    sources_path = args.sources
+    output_path = getattr(args, "output", None)
+
+    if not Path(sources_path).exists():
+        print(f"Sources file not found: {sources_path}", file=sys.stderr)
+        return 2
+
+    try:
+        result_path = build_index(sources_path, output_path)
+        print(f"Wrote index: {result_path}")
+        return 0
+    except Exception as e:
+        print(f"Failed to build index: {e}", file=sys.stderr)
+        return 3
 
 
 def cmd_render_md(args: argparse.Namespace) -> int:
@@ -435,6 +805,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--country-name", default=None, help="Country name (Phase 1 only for now)")
     r.add_argument("--country-iso3", default=None, help="ISO3 (Phase 1 only for now)")
     r.add_argument("--sources", default=None, help="Optional path to curated sources JSON file")
+    r.add_argument("--no-split", action="store_true", default=False, help="Send all sources in one LLM call instead of per-source")
+    r.add_argument("--index", default=None, help="Path to embedding index for RAG retrieval (from sources-index)")
     r.set_defaults(func=cmd_run)
 
     ra = sub.add_parser("run-all", help="Run all jobs from registry in batch")
@@ -443,6 +815,8 @@ def build_parser() -> argparse.ArgumentParser:
     ra.add_argument("--country-name", default=None, help="Country name (for country-specific jobs)")
     ra.add_argument("--country-iso3", default=None, help="ISO3 country code (for country-specific jobs)")
     ra.add_argument("--sources", default=None, help="Optional path to curated sources JSON file")
+    ra.add_argument("--no-split", action="store_true", default=False, help="Send all sources in one LLM call instead of per-source")
+    ra.add_argument("--index", default=None, help="Path to embedding index for RAG retrieval (from sources-index)")
     ra.set_defaults(func=cmd_run_all)
 
     ra2 = sub.add_parser("render-all", help="Render deliverables for all jobs (md/xlsx/docx) from existing outputs")
@@ -453,7 +827,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("sources-scan", help="Scan PDF/DOCX files and generate sources JSON")
     s.add_argument("--country-iso3", required=True, help="ISO3 country code (e.g., ETH, KEN)")
+    s.add_argument("--no-extract", action="store_true", default=False, help="Skip text extraction (metadata only)")
     s.set_defaults(func=cmd_sources_scan)
+
+    si = sub.add_parser("sources-index", help="Build embedding index from sources JSON for RAG retrieval")
+    si.add_argument("--sources", required=True, help="Path to sources JSON file (e.g., data/sources/eth_sources.json)")
+    si.add_argument("--output", default=None, help="Output path for index file (defaults to <stem>_index.json)")
+    si.set_defaults(func=cmd_sources_index)
 
     m = sub.add_parser("render-md", help="Render a validated output JSON to Markdown")
     m.add_argument("--job", required=True, help="Job id")

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(where:*)",
+      "Bash(C:Python312python.exe -m pip install:*)",
+      "Bash(C:Python312python.exe -m pytest tests/test_loader.py -v)",
+      "Bash(pytest:*)",
+      "Bash(python -m app.app:*)",
+      "Bash(python:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(pip show:*)",
+      "Bash(\"C:\\\\Users\\\\keset\\\\anaconda3\\\\python.exe\" -m pytest tests/test_indexer.py -v)",
+      "Bash(\"C:\\\\Users\\\\keset\\\\anaconda3\\\\python.exe\" -m pytest tests/ -v)",
+      "Bash(C:Userskesetanaconda3python.exe -m pytest:*)",
+      "Bash(/c/Users/keset/anaconda3/python.exe -m pytest:*)"
+    ]
+  }
+}

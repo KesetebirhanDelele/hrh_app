@@ -120,16 +120,18 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
                     doi = obj.get("doi")
                     isbn = obj.get("isbn")
 
+                    sid = obj.get("source_id")
+                    has_source_id = isinstance(sid, str) and sid.strip() != ""
                     has_http_url = isinstance(su, str) and _is_http_url(su)
                     has_ref = isinstance(ref, str) and ref.strip() != ""
                     has_doi = isinstance(doi, str) and doi.strip() != ""
                     has_isbn = isinstance(isbn, str) and isbn.strip() != ""
 
-                    if not (has_http_url or has_ref or has_doi or has_isbn):
+                    if not (has_source_id or has_http_url or has_ref or has_doi or has_isbn):
                         raise SchemaValidationError(
                             schema_path=str(schema_file),
                             message="Strict citation validation failed (HRH_STRICT_CITATIONS=1)",
-                            errors=[f"{path} must include either a valid http(s) source_url OR a non-empty reference/doi/isbn."],
+                            errors=[f"{path} must include either a valid source_id, http(s) source_url, or a non-empty reference/doi/isbn."],
                         )
                 for k, v in obj.items():
                     walk(v, f"{path}.{k}")

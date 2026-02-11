@@ -208,6 +208,7 @@ __marimo__/
 
 # HRH App specific - generated output files
 outputs/
+data/
 *.md
 *.xlsx
 *.docx
