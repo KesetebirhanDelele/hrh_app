@@ -36,6 +36,15 @@ The evidence.quality field MUST be one of these EXACT values:
 
 CRITICAL: Use "medium" NOT "moderate". Any other value will fail validation.
 
+### DETAIL & GRANULARITY (CRITICAL)
+- When source snippets contain tables, data breakdowns, or structured lists:
+  - REPRODUCE the table or list in your mechanism/implementation_notes (use markdown table format)
+  - Include ALL rows and columns — do NOT summarize or condense
+  - Preserve specific numbers, timelines, targets, and cadre details
+- mechanism should be 3–8 sentences with specific behavioral/system change details
+- implementation_notes should include specific steps with concrete targets, timelines, and resource requirements from sources
+- dependencies and risks should reference specific documented constraints, not generic ones
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)

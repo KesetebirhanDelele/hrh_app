@@ -35,6 +35,15 @@ For each domains[] entry:
 
 IMPORTANT: Do NOT include an evidence.type field.
 
+### DETAIL & GRANULARITY (CRITICAL)
+- When source snippets contain tables, data breakdowns, or structured lists:
+  - REPRODUCE the table or list in your summary (use markdown table format)
+  - Include ALL rows and columns — do NOT summarize or condense
+  - Preserve specific numbers, dates, percentages, and targets
+- summary should be 4–10 sentences with specific details from sources, NOT generic overviews
+- Include concrete data points, program details, staffing numbers, and timelines
+- If a source has a relevant table, your summary MUST include it
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)

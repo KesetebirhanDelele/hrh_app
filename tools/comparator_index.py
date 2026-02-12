@@ -40,8 +40,8 @@ def main():
     ap.add_argument("--file", required=True, help="Path to Excel file")
     ap.add_argument("--sheet", default=None, help="Sheet name (optional)")
     ap.add_argument("--country", required=True, help="Target country name (e.g., Ethiopia)")
-    ap.add_argument("--topk", type=int, default=8)
-    ap.add_argument("--aspirational_k", type=int, default=8)
+    ap.add_argument("--topk", type=int, default=20)
+    ap.add_argument("--aspirational_k", type=int, default=20)
     ap.add_argument("--numeric_cols", default=",".join(NUMERIC_COLS_DEFAULT))
     ap.add_argument("--weights", default=None,
                     help="Optional weights as col=weight,... e.g. MMR=1,U5M=1,NMR=1,TFR=0.7,CPR=0.7,PHC=1,GDP=0.4,Urban Pop=0.3")
@@ -138,7 +138,7 @@ def main():
     # Aspirational comparators:
     # - still reasonably close (top 30% by similarity distance)
     # - but “better” in at least 3 key outcome dimensions (MMR/U5M/NMR/TFR lower; CPR/PHC higher)
-    cutoff_idx = max(int(len(cand_scored) * 0.30), args.aspirational_k * 3)
+    cutoff_idx = max(int(len(cand_scored) * 0.50), args.aspirational_k * 3)
     pool = cand_scored.head(cutoff_idx).copy()
 
     def aspirational_better(row):

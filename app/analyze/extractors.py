@@ -164,21 +164,23 @@ def extract_table3_items(spec: Dict[str, Any]) -> List[InterventionItem]:
         candidates = _find_list_of_dicts(spec, lambda x: ("intervention" in x) or ("lever" in x) or ("mechanism" in x))
 
     # If not found, check for domains structure (Table 3 spec format)
+    # Creates one item per domain, with objectives summarised in the mechanism
+    # so the LLM receives meaningful context rather than placeholder text.
     if not candidates:
         domains = spec.get("domains")
         objectives = spec.get("objectives")
         if isinstance(domains, list) and domains and isinstance(objectives, list) and objectives:
+            readable_objectives = [str(o).replace("_", " ") for o in objectives]
+            objectives_summary = ", ".join(readable_objectives)
             out: List[InterventionItem] = []
             for i, domain in enumerate(domains, start=1):
                 domain_str = _clean(domain)
                 readable_domain = domain_str.replace("_", " ").title()
-                obj = objectives[0] if objectives else "productivity"
-                readable_obj = str(obj).replace("_", " ")
                 out.append(InterventionItem(
                     intervention_id=f"int_{i}",
                     lever=readable_domain,
-                    intervention=f"Sample intervention for {readable_domain}",
-                    mechanism=f"Addresses {readable_obj} through {readable_domain} improvements (stub placeholder)"
+                    intervention=f"{readable_domain} interventions",
+                    mechanism=f"Interventions in the {readable_domain} domain targeting: {objectives_summary}"
                 ))
             if out:
                 return out
@@ -235,11 +237,20 @@ def extract_benchmark_dimensions_countries(spec: Dict[str, Any]) -> Tuple[List[B
     if not dims_raw:
         dims_raw = _find_list_of_dicts(spec, lambda x: ("dimension" in x) or ("criteria" in x) or ("label" in x))
 
+    # If not found at top level, collect criteria from phase objects (benchmark spec format)
+    # e.g. phase2_hrh_relevance_and_reform_maturity.criteria, phase3_...criteria, etc.
+    if not dims_raw:
+        for key, val in spec.items():
+            if isinstance(val, dict) and "criteria" in val:
+                criteria = val["criteria"]
+                if isinstance(criteria, list):
+                    dims_raw.extend(criteria)
+
     dims: List[BenchmarkDimension] = []
     for i, d in enumerate(dims_raw, start=1):
         if not isinstance(d, dict):
             continue
-        did = _clean(d.get("dimension_id") or d.get("id") or f"d{i}")
+        did = _clean(d.get("dimension_id") or d.get("criterion_id") or d.get("id") or f"d{i}")
         lab = _clean(d.get("label") or d.get("name") or d.get("title"))
         if did and lab:
             dims.append(BenchmarkDimension(dimension_id=did, label=lab))

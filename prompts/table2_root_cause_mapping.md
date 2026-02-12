@@ -21,6 +21,15 @@ For each framework item:
 - Only use NoEvidence if you genuinely cannot find ANY relevant context in allowed_sources
 - locator MUST be specific (page/section/table/figure). Avoid "general discussion" or "entire document".
 
+### DETAIL & GRANULARITY (CRITICAL)
+- When source snippets contain tables, data breakdowns, or structured lists:
+  - REPRODUCE the table or list in your definition (use markdown table format)
+  - Include ALL rows and columns — do NOT summarize or condense
+  - Preserve specific numbers, percentages, and contextual details
+- Definitions should be detailed (3–8 sentences), grounded in specific source context
+- Include concrete examples, case studies, or data points from the sources
+- If sources contain quantitative data about the root cause, include the specific figures
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)

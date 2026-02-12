@@ -39,6 +39,15 @@ You MUST output valid JSON ONLY (no markdown, no prose) that validates against:
 - locator MUST be specific (page/section/table/figure). Avoid vague locators like "report" or "overview".
 - If a claim about effectiveness cannot be supported by allowed_sources, use NoEvidence (do not guess).
 
+### DETAIL & GRANULARITY (CRITICAL)
+- When source snippets contain tables, data breakdowns, or structured lists:
+  - REPRODUCE the table data in your mechanism/rationale (use markdown table format)
+  - Include ALL rows and columns — do NOT summarize or condense
+  - Preserve specific numbers, effect sizes, percentages, and outcome measures
+- implementation_notes should include specific practical steps with concrete details from sources
+- risks should reference specific documented challenges, not generic risks
+- Answers should be detailed and evidence-rich, NOT brief summaries
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)

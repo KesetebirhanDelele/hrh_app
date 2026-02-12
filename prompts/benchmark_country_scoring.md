@@ -19,6 +19,14 @@ For each country and each dimension:
   - use NoEvidence and assign conservative scores
 - locator MUST be specific (page/section/table/figure). Avoid vague references.
 
+### DETAIL & GRANULARITY (CRITICAL)
+- When source snippets contain tables, data breakdowns, or indicator scores:
+  - REPRODUCE the table or data in your rationale (use markdown table format)
+  - Include ALL rows and columns — do NOT summarize or condense
+  - Preserve specific numbers, rankings, percentages, and indicator values
+- Score rationale should be 3–6 sentences with specific data points justifying the score
+- Include concrete comparisons, benchmarks, or thresholds from the sources
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)

@@ -124,7 +124,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"  Index has {index_data.get('snippet_count', '?')} snippets")
 
             spec = _read_json(Path(str(job.spec_file)))
-            top_k = int(os.getenv("HRH_RAG_TOP_K", "20"))
+            top_k = int(os.getenv("HRH_RAG_TOP_K", "40"))
             country_name = getattr(args, "country_name", None)
             country_iso3 = getattr(args, "country_iso3", None)
 

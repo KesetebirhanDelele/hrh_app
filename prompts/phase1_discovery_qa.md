@@ -34,6 +34,17 @@ When writing "answer":
   - Each determinant MUST be supported by at least one citation OR you must clearly mark it as "not evidenced in allowed_sources" and then use NoEvidence overall if no determinants can be cited.
 - Avoid vague claims like “studies show…” without a locator and quote. If you cannot ground it, use NoEvidence.
 
+### DETAIL & GRANULARITY (CRITICAL)
+- When source snippets contain tables, data breakdowns, or structured lists:
+  - REPRODUCE the table or list in your answer (use markdown table format)
+  - Include ALL rows and columns — do NOT summarize or condense
+  - Preserve specific numbers, dates, percentages, and targets
+- When a question asks about staffing, allocation, or workforce:
+  - Include specific cadre names, numbers, ratios, and year-by-year targets if available
+  - Quote relevant tables verbatim from the sources
+- Answers should be 3–10 paragraphs with specific details, NOT 1–2 sentence summaries
+- If a source has a relevant table, your answer MUST include it
+
 ### CITATIONS (URL optional; traceability required)
 Each citation object MUST include:
 - source_title (string)
