@@ -95,7 +95,7 @@ def extract_rrr_solutions(spec: Dict[str, Any]) -> List[SolutionItem]:
                     out.append(SolutionItem(
                         solution_id=f"int_{i}",
                         solution=readable,
-                        mechanism=f"Mechanism for {readable} (stub placeholder)"
+                        mechanism=""
                     ))
             if out:
                 return out
@@ -106,8 +106,8 @@ def extract_rrr_solutions(spec: Dict[str, Any]) -> List[SolutionItem]:
             continue
         sid = _clean(s.get("solution_id") or s.get("id") or f"s{i}")
         sol = _clean(s.get("solution") or s.get("intervention") or s.get("title"))
-        mech = _clean(s.get("mechanism") or s.get("description") or s.get("how_it_works"))
-        if sid and sol and mech:
+        mech = _clean(s.get("mechanism") or s.get("description") or s.get("how_it_works") or "")
+        if sid and sol:
             out.append(SolutionItem(solution_id=sid, solution=sol, mechanism=mech))
 
     if not out:

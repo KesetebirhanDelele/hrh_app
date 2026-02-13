@@ -47,5 +47,117 @@
     "transferability_conditions",
     "evidence_quality",
     "citations"
+  ],
+  "solutions": [
+    {
+      "solution_id": "int_1",
+      "intervention": "Supportive Supervision and Coaching",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_2",
+      "intervention": "Performance Contracts and Scorecards",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_3",
+      "intervention": "Attendance Monitoring and Verification",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_4",
+      "intervention": "Financial Incentives and Allowances",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_5",
+      "intervention": "Non-Financial Incentives, Recognition, and Career Path",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_6",
+      "intervention": "Housing, Safety, and Transport Solutions",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_7",
+      "intervention": "Task Shifting and Task Redesign",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_8",
+      "intervention": "Digital Tools, Decision Support, and Scheduling",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_9",
+      "intervention": "Community Accountability Mechanisms",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    },
+    {
+      "solution_id": "int_10",
+      "intervention": "Supply Chain and Job Aids Improvements",
+      "mechanism": "",
+      "feasibility_resource_constrained": "unknown",
+      "evidence_quality": "none",
+      "evidence_rationale": "",
+      "citations": [],
+      "risks": "",
+      "implementation_notes": ""
+    }
   ]
 }

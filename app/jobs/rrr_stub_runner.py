@@ -29,7 +29,7 @@ def run_rrr_stub(spec_id: str) -> Path:
             {
                 "solution_id": s.solution_id,
                 "solution": s.solution,
-                "mechanism": s.mechanism,
+                "mechanism": s.mechanism or f"To be determined from evidence for {s.solution}",
                 "evidence": {
                     "quality": "none",
                     "rationale": "Stub run: no sources were provided or searched.",
