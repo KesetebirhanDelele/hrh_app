@@ -18,6 +18,21 @@ from app.ingest.indexer import build_index, load_index
 from app.utils import auto_output_name
 
 
+_GENERIC_MECHANISM_PHRASES = ("to be determined", "placeholder", "tbd")
+
+
+def _build_rrr_query(solution: str, mechanism: str) -> str:
+    """Build a RAG retrieval query for an RRR solution item.
+
+    If mechanism is empty or contains generic/placeholder text, use only the
+    solution name so the embedding search isn't polluted by filler words.
+    """
+    mech = (mechanism or "").strip().lower()
+    if not mech or any(phrase in mech for phrase in _GENERIC_MECHANISM_PHRASES):
+        return solution
+    return f"{solution} — {mechanism}"
+
+
 def _read_json(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -420,7 +435,7 @@ def _extract_rag_items(
     elif job_id == "rrr_evidence_matrix":
         sols = extract_rrr_solutions(spec)
         for s in sols:
-            query = f"{s.solution} — {s.mechanism}"
+            query = _build_rrr_query(s.solution, s.mechanism)
             item_inputs = {
                 "solutions": [{"solution_id": s.solution_id, "solution": s.solution, "mechanism": s.mechanism}],
             }

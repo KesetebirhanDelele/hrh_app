@@ -1,84 +1,96 @@
-# RRR Evidence Matrix (Schema-Strict)
+# RRR Evidence Matrix (Schema-Strict, Grounded)
 
-You MUST output valid JSON ONLY (no markdown, no prose) that validates against:
+Return VALID JSON ONLY (no markdown outside JSON, no prose) that validates against:
 - schemas/rrr_evidence_matrix.schema.json
 - schemas/common.json
 
-## Output rules
-- Output must contain: job_id, spec_id, generated_at, solutions
-- Each solutions[] row MUST include evidence:
-  - Use EvidenceNote ONLY if you have at least one valid citation after applying citation rules
-  - Otherwise use NoEvidence with quality="none" and citations=[]
+## Required top-level keys
+job_id, spec_id, generated_at, solutions
 
-## STRICT CONSTRAINTS (must follow exactly)
-- Do NOT include a "type" field anywhere in the output (evidence.type, citation.type, etc.). Those keys are forbidden.
-- evidence must be EXACTLY one of:
-  A) EvidenceNote:
-     {
-       "quality": "high" | "medium" | "low",
-       "rationale": "<string>",
-       "citations": [ <one or more valid citation objects> ]
-     }
-     CRITICAL: Each citation MUST have at least ONE of: source_url, reference, doi, or isbn
-     CRITICAL: If citations would be empty after applying rules, you MUST use NoEvidence instead.
-  B) NoEvidence:
-     {
-       "quality": "none",
-       "rationale": "<string>",
-       "citations": []
-     }
+## Core rule for evidence typing
+For EACH solution row:
+- Use EvidenceNote ONLY if you can provide 1–3 valid citations that DIRECTLY support the mechanism.
+- Otherwise use NoEvidence with:
+  evidence.quality = "none"
+  evidence.rationale = "No supporting evidence found in allowed sources."
+  evidence.citations = []
 
-- feasibility_resource_constrained must be exactly one of:
-  "high" | "medium" | "low" | "unknown"
-  (Do NOT use "moderate". Map "moderate" to "medium".)
+## Forbidden keys
+Do NOT include a "type" field anywhere.
 
-### Grounding specificity (CRITICAL)
-- For each solution, the evidence.rationale MUST state:
-  - what outcome(s) the evidence supports (e.g., attendance, motivation, productivity, quality)
-  - the context limits (e.g., LMIC/primary care; not Ethiopia-specific)
-- locator MUST be specific (page/section/table/figure). Avoid vague locators like "report" or "overview".
-- If a claim about effectiveness cannot be supported by allowed_sources, use NoEvidence (do not guess).
+## Field semantics (MUST be distinct)
+- mechanism (string, REQUIRED, NEVER blank)
+  - If evidence.quality != "none": 1–2 sentences of causal chain:
+    Action → intermediate change → outcome(s)
+    Must be supported by citations.
+  - If evidence.quality == "none": mechanism MUST start with "Hypothesis:" and be exactly 1 sentence.
+    Must NOT claim proven effects.
 
-### DETAIL & GRANULARITY (CRITICAL)
-- When source snippets contain tables, data breakdowns, or structured lists:
-  - REPRODUCE the table data in your mechanism/rationale (use markdown table format)
-  - Include ALL rows and columns — do NOT summarize or condense
-  - Preserve specific numbers, effect sizes, percentages, and outcome measures
-- implementation_notes should include specific practical steps with concrete details from sources
-- risks should reference specific documented challenges, not generic risks
-- Answers should be detailed and evidence-rich, NOT brief summaries
+- evidence.rationale (string)
+  - If EvidenceNote: 1–3 sentences describing what the cited sources report:
+    setting/context + what was observed/measured + key limitation.
+  - Must NOT restate the causal chain wording from mechanism.
+  - If NoEvidence: EXACT sentence:
+    "No supporting evidence found in allowed sources."
 
-### CITATIONS (URL optional; traceability required)
-Each citation object MUST include:
-- source_title (string)
-- locator (string) — specific page/section/table/figure
-And MUST include at least ONE of:
-- source_url (valid http/https URL), OR
-- reference (non-empty grey literature/book/report reference), OR
-- doi, OR
-- isbn
+## Evidence object must be EXACTLY one of:
+A) EvidenceNote:
+{
+  "quality": "high" | "medium" | "low",
+  "rationale": "<string>",
+  "citations": [ <1 to 3 citations> ]
+}
+B) NoEvidence:
+{
+  "quality": "none",
+  "rationale": "No supporting evidence found in allowed sources.",
+  "citations": []
+}
 
-Strongly preferred:
-- quote (short excerpt 1–3 sentences supporting the key claim)
+## Citations (STRICT)
+- HARD CAP: max 3 citations per solution.
+- If evidence.quality != "none": citations length MUST be 1–3.
+- If evidence.quality == "none": citations MUST be [].
+- Every citation MUST come from provided allowed_sources snippets.
+- Each citation MUST include:
+  - source_id (must match allowed_sources[].source_id)
+  - source_title
+  - locator (specific page/section/table/figure)
+  - quote (1–3 sentences copied from snippet text that supports the mechanism)
+  - AND at least ONE of: source_url OR doi OR isbn OR reference
+    *If the snippet text lacks identifiers, pull source_url/doi/reference from allowed_sources metadata for that source_id.*
 
-If you cannot provide any of the above identifiers, do NOT include the citation.
-If you have no citations after applying the rule, you MUST use NoEvidence (quality="none", citations=[]).
+## Feasibility enum
+feasibility_resource_constrained must be exactly:
+"high" | "medium" | "low" | "unknown"
+(Map "moderate" → "medium")
 
-### ALLOWED SOURCES POLICY
-If `allowed_sources` are provided in inputs:
-- Every citation MUST include:
-  - source_id: must match one of allowed_sources[].source_id
-- You may ONLY cite from allowed_sources.
-- If allowed_sources do not support the solution’s evidence claim, use NoEvidence.
+## Synonym matching (for snippet evaluation)
+When judging snippet relevance, treat these as equivalent:
+- Performance Contracts and Scorecards: performance agreements, appraisal, balanced scorecard, KPIs, performance monitoring
+- Attendance Monitoring and Verification: attendance tracking, presence verification, biometric attendance, absenteeism monitoring
+- Non-financial incentives: recognition, awards, career progression, promotion pathways, training opportunities, professional development
+- Supportive Supervision: mentoring, coaching, clinical supervision, on-the-job training
+- Financial Incentives: salary supplements, allowances, bonuses, performance-based payments
+- Housing and Transport: accommodation, transportation support, logistics/infrastructure support
+
+## Grounding threshold (avoid false “NoEvidence” but prevent overclaim)
+- EvidenceNote is allowed if the snippet explicitly links the intervention (or synonym) to at least ONE relevant outcome:
+  motivation, retention/attrition, absenteeism/attendance, productivity/time use, performance/service quality.
+- If a snippet only mentions the topic with no outcome link, it is NOT sufficient for EvidenceNote.
+
+## Output discipline
+- JSON ONLY.
+- Keep risks as an array of strings (0–3 items), grounded when possible.
+- implementation_notes: 1–3 concrete steps; if not supported by sources, keep generic but plausible.
 
 ## Inputs you will receive
 - spec_id (string)
-- solutions: list of objects with:
-  - solution_id
-  - solution
-  - mechanism (or description)
+- solutions: [{ solution_id, solution, mechanism (optional) }]
+- allowed_sources: list of sources with source_id, title, and possibly source_url/doi/reference
+- retrieved_snippets: text chunks with source_id, source_title, locator, text
 
-## JSON template (shape)
+## Output JSON shape
 {
   "job_id": "rrr_evidence_matrix",
   "spec_id": "<spec_id>",
@@ -88,7 +100,7 @@ If `allowed_sources` are provided in inputs:
       "solution_id": "...",
       "solution": "...",
       "mechanism": "...",
-      "evidence": { "quality": "none", "rationale": "...", "citations": [] },
+      "evidence": { ...EvidenceNote or NoEvidence... },
       "feasibility_resource_constrained": "unknown",
       "risks": [],
       "implementation_notes": ""
@@ -96,4 +108,3 @@ If `allowed_sources` are provided in inputs:
   ]
 }
 
-## Now produce the final JSON only.
