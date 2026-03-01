@@ -145,6 +145,52 @@ def render_markdown(job_id: str, payload: Dict[str, Any]) -> str:
             out.append(_render_citations(ev.get("citations", [])) + "\n\n")
         return "".join(out).strip() + "\n"
 
+    if job_id == "domain_solutions_from_evidence":
+        meta2 = [f"# Domain Solutions from Evidence\n"]
+        if payload.get("target_country"):
+            meta2.append(f"- **target_country**: {payload['target_country']}\n")
+        if payload.get("generated_at"):
+            meta2.append(f"- **generated_at**: {payload['generated_at']}\n")
+        out = ["\n".join(meta2) + "\n"]
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            out.append(f"## {d_id.replace('_', ' ').title()}\n\n")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                solutions = fa.get("solutions", [])
+                out.append(f"### {fa_id.replace('_', ' ').title()}\n\n")
+                if not solutions:
+                    out.append("_No evidence-backed solutions found in provided sources._\n\n")
+                    continue
+                for sol in solutions:
+                    out.append(f"#### {sol.get('solution_id','')}: {_md_escape(sol.get('title',''))}\n\n")
+                    out.append(f"**Evidence strength:** {sol.get('evidence_strength','')}\n\n")
+                    out.append(f"**Description:** {_md_escape(sol.get('description',''))}\n\n")
+                    out.append(f"**Mechanism:** {_md_escape(sol.get('mechanism',''))}\n\n")
+                    conds = sol.get("implementation_conditions", [])
+                    if conds:
+                        out.append("**Implementation conditions:**\n")
+                        for cond in conds:
+                            out.append(f"- {_md_escape(cond)}\n")
+                        out.append("\n")
+                    risks = sol.get("risks", [])
+                    if risks:
+                        out.append("**Risks:** " + "; ".join(_md_escape(r) for r in risks) + "\n\n")
+                    impl = sol.get("implementation_notes", "")
+                    if impl:
+                        out.append(f"**Implementation notes:** {_md_escape(impl)}\n\n")
+                    cits = sol.get("citations", [])
+                    if cits:
+                        out.append("**Citations:**\n")
+                        for i, c in enumerate(cits, 1):
+                            label = c.get("source_title") or c.get("doc_id", "?")
+                            out.append(f"{i}. **{_md_escape(label)}** — {c.get('locator','')}\n")
+                            snippet = c.get("snippet", "")
+                            if snippet:
+                                out.append(f"   > {_md_escape(snippet)}\n")
+                        out.append("\n")
+        return "".join(out).strip() + "\n"
+
     raise KeyError(f"render_markdown: unsupported job_id '{job_id}'")
 
 

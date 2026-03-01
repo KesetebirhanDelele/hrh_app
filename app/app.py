@@ -112,10 +112,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             try:
                 sources_data = _read_json(Path(sources_path))
                 all_sources = sources_data.get("sources", [])
-                allowed_ids = [src.get("source_id") for src in all_sources if src.get("source_id")]
-                if allowed_ids:
-                    os.environ["HRH_ALLOWED_SOURCE_IDS"] = ",".join(allowed_ids)
-                    os.environ["HRH_ENFORCE_ALLOWED_SOURCES"] = "1"
+                # domain_solutions_from_evidence uses doc_id (not source_id) in LocalCitation,
+                # so source_id enforcement does not apply and would always fail validation.
+                if args.job != "domain_solutions_from_evidence":
+                    allowed_ids = [src.get("source_id") for src in all_sources if src.get("source_id")]
+                    if allowed_ids:
+                        os.environ["HRH_ALLOWED_SOURCE_IDS"] = ",".join(allowed_ids)
+                        os.environ["HRH_ENFORCE_ALLOWED_SOURCES"] = "1"
             except Exception as e:
                 print(f"Warning: Could not load sources for validation: {e}", file=sys.stderr)
 

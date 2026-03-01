@@ -1,0 +1,51 @@
+{
+  "spec_id": "domain_solutions_from_evidence_v1",
+  "spec_type": "domain_solutions_extraction",
+  "version": "v1",
+  "description": "Extract evidence-backed HRH solutions grouped by learning domain and focus area. Solutions are discovered from source documents only — no pre-seeded list is used.",
+  "extraction_requirements": {
+    "require_citations_per_solution": true,
+    "min_citations_per_solution": 1,
+    "if_no_citations_then": "omit_solution",
+    "deduplicate_near_identical": true
+  },
+  "domains": [
+    {
+      "domain_id": "accountability",
+      "domain_label": "Accountability",
+      "focus_areas": [
+        { "focus_area_id": "supervision_models",                 "label": "Supervision Models" },
+        { "focus_area_id": "performance_contracts",              "label": "Performance Contracts" },
+        { "focus_area_id": "community_or_social_accountability", "label": "Community or Social Accountability" },
+        { "focus_area_id": "enforcement_mechanisms",             "label": "Enforcement Mechanisms" }
+      ]
+    },
+    {
+      "domain_id": "absenteeism",
+      "domain_label": "Absenteeism",
+      "focus_areas": [
+        { "focus_area_id": "measurement_approaches",                     "label": "Measurement Approaches" },
+        { "focus_area_id": "incentives_and_sanctions",                   "label": "Incentives and Sanctions" },
+        { "focus_area_id": "deployment_housing_safety_workload_factors", "label": "Deployment, Housing, Safety and Workload Factors" }
+      ]
+    },
+    {
+      "domain_id": "productivity",
+      "domain_label": "Productivity",
+      "focus_areas": [
+        { "focus_area_id": "task_design_and_task_shifting",  "label": "Task Design and Task Shifting" },
+        { "focus_area_id": "time_use_optimization",          "label": "Time Use Optimization" },
+        { "focus_area_id": "digital_or_managerial_enablers", "label": "Digital or Managerial Enablers" }
+      ]
+    },
+    {
+      "domain_id": "system_enablers",
+      "domain_label": "System Enablers",
+      "focus_areas": [
+        { "focus_area_id": "governance_arrangements",            "label": "Governance Arrangements" },
+        { "focus_area_id": "financing_and_incentives",           "label": "Financing and Incentives" },
+        { "focus_area_id": "political_economy_considerations",   "label": "Political Economy Considerations" }
+      ]
+    }
+  ]
+}

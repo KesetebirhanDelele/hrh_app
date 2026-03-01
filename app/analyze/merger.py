@@ -5,6 +5,35 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 _QUALITY_RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
+_STRENGTH_RANK = {"strong": 3, "moderate": 2, "weak": 1}
+_MAX_CITATIONS_PER_SOLUTION = 3
+
+
+def _cap_citations_by_source(citations: List[Dict[str, Any]], max_cits: int = _MAX_CITATIONS_PER_SOLUTION) -> List[Dict[str, Any]]:
+    """Keep at most max_cits citations, preferring one per unique doc_id.
+
+    First pass: take the first citation from each distinct doc_id.
+    Second pass: fill any remaining slots from any source (in original order).
+    """
+    if len(citations) <= max_cits:
+        return citations
+    seen_docs: set[str] = set()
+    selected: List[Dict[str, Any]] = []
+    remainder: List[Dict[str, Any]] = []
+    for cit in citations:
+        doc_id = cit.get("doc_id", "")
+        if doc_id not in seen_docs:
+            seen_docs.add(doc_id)
+            selected.append(cit)
+        else:
+            remainder.append(cit)
+        if len(selected) >= max_cits:
+            return selected
+    for cit in remainder:
+        if len(selected) >= max_cits:
+            break
+        selected.append(cit)
+    return selected
 
 MERGE_CONFIG: Dict[str, Dict[str, Any]] = {
     "phase1_discovery_qa": {
@@ -113,6 +142,94 @@ def _merge_items(
     return merged
 
 
+def _merge_domain_solutions(partial_outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge partial outputs for domain_solutions_from_evidence.
+
+    Walks domains → focus_areas → solutions across all partials, deduplicating
+    by title and combining citations and implementation_conditions.
+    """
+    base = dict(partial_outputs[0])
+
+    # Nested map: domain_id → focus_area_id → title_lower → solution dict
+    merged_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+    for output in partial_outputs:
+        for domain in output.get("domains", []):
+            d_id = domain.get("domain_id")
+            if not d_id:
+                continue
+            if d_id not in merged_map:
+                merged_map[d_id] = {}
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id")
+                if not fa_id:
+                    continue
+                if fa_id not in merged_map[d_id]:
+                    merged_map[d_id][fa_id] = {}
+                for sol in fa.get("solutions", []):
+                    title_key = sol.get("title", "").strip().lower()
+                    if not title_key:
+                        continue
+                    if title_key not in merged_map[d_id][fa_id]:
+                        merged_map[d_id][fa_id][title_key] = dict(sol)
+                    else:
+                        existing = merged_map[d_id][fa_id][title_key]
+                        # Upgrade evidence_strength if incoming is stronger
+                        e_rank = _STRENGTH_RANK.get(existing.get("evidence_strength", "weak"), 1)
+                        i_rank = _STRENGTH_RANK.get(sol.get("evidence_strength", "weak"), 1)
+                        if i_rank > e_rank:
+                            existing["evidence_strength"] = sol["evidence_strength"]
+                        # Combine implementation_conditions (deduplicate)
+                        seen_conds: set[str] = set(existing.get("implementation_conditions", []))
+                        for cond in sol.get("implementation_conditions", []):
+                            if cond not in seen_conds:
+                                seen_conds.add(cond)
+                                existing.setdefault("implementation_conditions", []).append(cond)
+                        # Combine risks (deduplicate)
+                        seen_risks: set[str] = set(existing.get("risks", []))
+                        for risk in sol.get("risks", []):
+                            if risk not in seen_risks:
+                                seen_risks.add(risk)
+                                existing.setdefault("risks", []).append(risk)
+                        # Append implementation_notes if different
+                        en = (existing.get("implementation_notes") or "").strip()
+                        in_ = (sol.get("implementation_notes") or "").strip()
+                        if in_ and in_ != en:
+                            existing["implementation_notes"] = (en + "\n" + in_).strip() if en else in_
+                        # Combine citations (deduplicate by doc_id + locator), then cap
+                        seen_cits: set[tuple] = {
+                            (c.get("doc_id", ""), c.get("locator", ""))
+                            for c in existing.get("citations", [])
+                        }
+                        for cit in sol.get("citations", []):
+                            key = (cit.get("doc_id", ""), cit.get("locator", ""))
+                            if key not in seen_cits:
+                                seen_cits.add(key)
+                                existing.setdefault("citations", []).append(cit)
+                        existing["citations"] = _cap_citations_by_source(existing["citations"])
+
+    # Reconstruct domains list preserving order from base, filling in merged solutions
+    result_domains = []
+    for domain in base.get("domains", []):
+        d_id = domain.get("domain_id")
+        fa_map = merged_map.get(d_id, {})
+        result_fas = []
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id")
+            sols_map = fa_map.get(fa_id, {})
+            # Renumber solution_ids sequentially within each focus area
+            solutions = []
+            for n, sol in enumerate(sols_map.values(), 1):
+                sol = dict(sol)
+                sol["solution_id"] = f"{d_id}_{fa_id}_{n}"
+                solutions.append(sol)
+            result_fas.append({"focus_area_id": fa_id, "solutions": solutions})
+        result_domains.append({"domain_id": d_id, "focus_areas": result_fas})
+
+    base["domains"] = result_domains
+    return base
+
+
 def merge_outputs(
     job_id: str,
     partial_outputs: List[Dict[str, Any]],
@@ -127,6 +244,9 @@ def merge_outputs(
         raise ValueError("merge_outputs: no partial outputs to merge")
     if len(partial_outputs) == 1:
         return partial_outputs[0]
+
+    if job_id == "domain_solutions_from_evidence":
+        return _merge_domain_solutions(partial_outputs)
 
     config = MERGE_CONFIG.get(job_id)
     if not config:

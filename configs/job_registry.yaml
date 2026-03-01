@@ -50,3 +50,10 @@ jobs:
     prompt_template: "prompts/country_learning_briefs.md"
     output_schema: "schemas/country_learning_briefs.schema.json"
     output_dir: "outputs/country_learning_briefs"
+
+  - job_id: domain_solutions_from_evidence
+    label: "Domain Solutions from Evidence (by HRH Learning Domain)"
+    spec_file: "specs/domain_solutions_from_evidence.json"
+    prompt_template: "prompts/domain_solutions_from_evidence.md"
+    output_schema: "schemas/domain_solutions_from_evidence.schema.json"
+    output_dir: "outputs/domain_solutions_from_evidence"

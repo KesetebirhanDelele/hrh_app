@@ -16,7 +16,11 @@
       "Bash(\"C:\\\\Users\\\\keset\\\\anaconda3\\\\python.exe\" -m pytest tests/test_indexer.py -v)",
       "Bash(\"C:\\\\Users\\\\keset\\\\anaconda3\\\\python.exe\" -m pytest tests/ -v)",
       "Bash(C:Userskesetanaconda3python.exe -m pytest:*)",
-      "Bash(/c/Users/keset/anaconda3/python.exe -m pytest:*)"
+      "Bash(/c/Users/keset/anaconda3/python.exe -m pytest:*)",
+      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py tests/test_merger.py -v)",
+      "Bash(py -3.12 -c \"from app.render.md import render_markdown; print\\(''OK''\\)\")",
+      "Bash(py -3.12 -c \"from app.render.xlsx import render_xlsx; print\\(''OK''\\)\")",
+      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py tests/test_merger.py -q)"
     ]
   }
 }

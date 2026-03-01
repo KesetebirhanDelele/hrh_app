@@ -153,6 +153,75 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
         wb.save(out_path)
         return out_path
 
+    elif job_id == "domain_solutions_from_evidence":
+        # Sheet 1: one row per solution (flat)
+        ws.title = "solutions"
+        headers = [
+            "domain_id", "focus_area_id", "solution_id", "title",
+            "evidence_strength", "description", "mechanism",
+            "implementation_conditions", "risks", "implementation_notes", "citations",
+        ]
+        _write_header(ws, headers)
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                for sol in fa.get("solutions", []):
+                    conds = "\n".join(sol.get("implementation_conditions", []) or [])
+                    risks = "; ".join(sol.get("risks", []) or [])
+                    cit_lines = "\n".join(
+                        f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
+                        for c in sol.get("citations", [])
+                    )
+                    ws.append([
+                        d_id,
+                        fa_id,
+                        sol.get("solution_id", ""),
+                        sol.get("title", ""),
+                        sol.get("evidence_strength", ""),
+                        sol.get("description", ""),
+                        sol.get("mechanism", ""),
+                        conds,
+                        risks,
+                        sol.get("implementation_notes", "") or "",
+                        cit_lines,
+                    ])
+        _autosize(ws)
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        # Sheet 2: one row per citation (long format)
+        ws2 = wb.create_sheet("citations")
+        _write_header(ws2, [
+            "domain_id", "focus_area_id", "solution_id", "title",
+            "source_title", "doc_id", "locator", "snippet",
+        ])
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                for sol in fa.get("solutions", []):
+                    for cit in sol.get("citations", []):
+                        ws2.append([
+                            d_id,
+                            fa_id,
+                            sol.get("solution_id", ""),
+                            sol.get("title", ""),
+                            cit.get("source_title", "") or cit.get("doc_id", ""),
+                            cit.get("doc_id", ""),
+                            cit.get("locator", ""),
+                            cit.get("snippet", ""),
+                        ])
+        _autosize(ws2)
+        for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row, min_col=1, max_col=ws2.max_column):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(out_path)
+        return out_path
+
     else:
         raise KeyError(f"render_xlsx: unsupported job_id '{job_id}'")
 

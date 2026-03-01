@@ -188,14 +188,24 @@ def render_prompt_for_job(
             }
         )
 
+    elif job_id == "domain_solutions_from_evidence":
+        if not country_name:
+            raise ValueError("country_name is required for domain_solutions_from_evidence")
+        inputs["target_country"] = country_name
+        inputs["domains"] = spec.get("domains", [])
+        if country_iso3:
+            inputs["country_iso3"] = country_iso3
+
     else:
         raise KeyError(f"render_prompt_for_job: unsupported job_id '{job_id}'")
 
     # Build final prompt
     final_prompt = template.rstrip() + "\n\n## RENDERED INPUTS (machine-generated)\n" + json.dumps(inputs, ensure_ascii=False, indent=2) + "\n"
 
-    # Add source_id enforcement instruction if allowed_sources provided
-    if sources_path and inputs.get("allowed_sources"):
+    # Add source_id enforcement instruction if allowed_sources provided.
+    # Skipped for domain_solutions_from_evidence — its LocalCitation uses doc_id, not source_id;
+    # injecting a source_id instruction causes additionalProperties validation failures.
+    if sources_path and inputs.get("allowed_sources") and job_id != "domain_solutions_from_evidence":
         final_prompt += "\n## IMPORTANT: Source ID Enforcement\n"
         final_prompt += "When citing from the allowed_sources above, you MUST include the source_id field in each citation.\n"
         final_prompt += "The source_id must match one of the source_id values from allowed_sources (e.g., SRC1, SRC2, etc.).\n"
