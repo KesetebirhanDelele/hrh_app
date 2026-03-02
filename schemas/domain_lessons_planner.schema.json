@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "domain_lessons_planner.schema.json",
+  "title": "Domain Lessons Planner Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "generated_at", "plans"],
+  "properties": {
+    "job_id":       { "const": "domain_lessons_planner" },
+    "generated_at": { "$ref": "common.json#/$defs/ISODate" },
+    "plans":        { "type": "array", "items": { "$ref": "#/$defs/SourcePlan" } }
+  },
+  "$defs": {
+    "Segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segment_id", "locators", "likely_categories", "priority", "reason"],
+      "properties": {
+        "segment_id": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "locators": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" }
+        },
+        "likely_categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "proven_interventions", "lessons_learnt", "recommendations",
+              "prerequisites", "operational_barriers", "governance_process_dependencies",
+              "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications"
+            ]
+          }
+        },
+        "priority": { "type": "string", "enum": ["high", "medium", "low"] },
+        "reason":   { "$ref": "common.json#/$defs/NonEmptyString" }
+      }
+    },
+    "SourcePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_title", "segments"],
+      "properties": {
+        "source_id":    { "$ref": "common.json#/$defs/NonEmptyString" },
+        "source_title": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Segment" }
+        }
+      }
+    }
+  }
+}

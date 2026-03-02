@@ -322,6 +322,168 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"Wrote (invalid): {out_path}", file=sys.stderr)
             return 3
 
+    elif args.mode == "llm_planned":
+        if args.job != "domain_lessons_option_b":
+            print(
+                f"--mode llm_planned is only supported for domain_lessons_option_b (got {args.job!r})",
+                file=sys.stderr,
+            )
+            return 1
+        sources_path = getattr(args, "sources", None)
+        if not sources_path:
+            print("--mode llm_planned requires --sources", file=sys.stderr)
+            return 1
+
+        from app.analyze.llm import LLMNotConfigured, generate_json
+        from app.analyze.merger import merge_outputs
+        from app.analyze.prompting import render_prompt_for_job
+        import json as _json
+        import tempfile
+        import time
+
+        job = get_job(args.job)
+        try:
+            schema_rel = str(job.output_schema.relative_to(Path.cwd()))
+        except Exception:
+            schema_rel = str(job.output_schema)
+
+        all_sources: list[dict] = []
+        try:
+            sources_data = _read_json(Path(sources_path))
+            all_sources = sources_data.get("sources", [])
+        except Exception as e:
+            print(f"Could not load sources: {e}", file=sys.stderr)
+            return 2
+
+        job.output_dir.mkdir(parents=True, exist_ok=True)
+        out_filename = auto_output_name(
+            job.output_dir, "json", mode="llm_planned",
+            country_name=getattr(args, "country_name", None),
+            country_iso3=getattr(args, "country_iso3", None),
+        )
+        out_path = Path(out_filename)
+
+        planner_job = get_job("domain_lessons_planner")
+        try:
+            planner_schema_rel = str(planner_job.output_schema.relative_to(Path.cwd()))
+        except Exception:
+            planner_schema_rel = str(planner_job.output_schema)
+
+        sources_by_id = {s.get("source_id", s.get("doc_id", "")): s for s in all_sources}
+        sources_with_snippets = [s for s in all_sources if s.get("snippets")]
+        call_delay = int(os.getenv("HRH_CALL_DELAY_SECS", "65"))
+
+        # ── Stage 1: Planner pass ──────────────────────────────────────────────
+        print(f"  Planner pass: {len(sources_with_snippets)} source(s)...")
+        all_plans: list[dict] = []
+
+        for src_idx, src in enumerate(sources_with_snippets, 1):
+            src_id = src.get("source_id", src.get("doc_id", f"src_{src_idx}"))
+            print(f"  [{src_idx}/{len(sources_with_snippets)}] Planning {src_id!r}...")
+
+            planner_payload = _llm_call_with_retry(
+                _build_planner_prompt(src, str(planner_job.prompt_template)),
+                generate_json, LLMNotConfigured, _json,
+                planner_schema_rel, job_id="domain_lessons_planner",
+            )
+            if planner_payload is None:
+                print(f"  Warning: planner returned no output for {src_id!r}", file=sys.stderr)
+                continue
+
+            _stamp_run_date("domain_lessons_planner", planner_payload)
+
+            for err in _check_planner_locators(planner_payload, sources_by_id):
+                print(f"  [PLANNER WARNING] {err}", file=sys.stderr)
+
+            all_plans.extend(planner_payload.get("plans", []))
+
+            if src_idx < len(sources_with_snippets) and call_delay > 0:
+                print(f"  Waiting {call_delay}s for rate limit window...")
+                time.sleep(call_delay)
+
+        if not all_plans:
+            print("No plans produced by planner.", file=sys.stderr)
+            return 3
+
+        # ── Stage 2: Targeted extraction ──────────────────────────────────────
+        _max_excerpts = int(os.getenv("HRH_MAX_EXCERPTS_PER_CALL", "5"))
+        _max_chars = int(os.getenv("HRH_MAX_CHARS_PER_CALL", "16000"))
+        extraction_batches = _planner_to_batches(all_plans, sources_by_id, _max_excerpts, _max_chars)
+        if not extraction_batches:
+            print("No extraction batches from planner output.", file=sys.stderr)
+            return 3
+
+        print(f"  Extraction pass: {len(extraction_batches)} batch(es)...")
+        partial_outputs: list[dict] = []
+
+        for batch_idx, batch in enumerate(extraction_batches, 1):
+            src_name = (batch[0].get("source_title", "unknown")[:50] if batch else "unknown")
+            print(f"  Batch {batch_idx}/{len(extraction_batches)}: {src_name}")
+
+            tmp_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, encoding="utf-8"
+            )
+            _json.dump({"sources": batch}, tmp_file, ensure_ascii=False, indent=2)
+            tmp_file.close()
+            tmp_sources_path = tmp_file.name
+
+            try:
+                rendered_prompt = render_prompt_for_job(
+                    job_id=args.job,
+                    template_path=str(job.prompt_template),
+                    spec_path=str(job.spec_file),
+                    spec_id=args.spec_id,
+                    country_name=getattr(args, "country_name", None),
+                    country_iso3=getattr(args, "country_iso3", None),
+                    sources_path=tmp_sources_path,
+                )
+            except Exception as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            finally:
+                Path(tmp_sources_path).unlink(missing_ok=True)
+
+            payload = _llm_call_with_retry(
+                rendered_prompt, generate_json, LLMNotConfigured, _json,
+                schema_rel, job_id=args.job,
+            )
+            if payload is None:
+                print(f"  Warning: no valid output for batch {batch_idx}", file=sys.stderr)
+            else:
+                partial_outputs.append(payload)
+
+            if len(extraction_batches) > 1 and batch_idx < len(extraction_batches) and call_delay > 0:
+                print(f"  Waiting {call_delay}s for rate limit window...")
+                time.sleep(call_delay)
+
+        if not partial_outputs:
+            print("No valid outputs produced.", file=sys.stderr)
+            return 3
+
+        if len(partial_outputs) == 1:
+            final_payload = partial_outputs[0]
+        else:
+            try:
+                final_payload = merge_outputs(args.job, partial_outputs)
+            except Exception as e:
+                print(f"Merge failed: {e}", file=sys.stderr)
+                return 3
+
+        _stamp_run_date(args.job, final_payload)
+        _log_coverage_warnings(args.job, final_payload, all_sources)
+        out_path.write_text(
+            _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        try:
+            validate_output(final_payload, schema_rel)
+            print(f"Wrote: {out_path}")
+            print("VALID ✅")
+            return 0
+        except Exception as e:
+            print(f"Validation failed: {e}", file=sys.stderr)
+            return 4
+
     print(f"Unknown mode: {args.mode}", file=sys.stderr)
     return 2
 
@@ -521,6 +683,105 @@ def _expand_source_batches_for_job(
     return expanded
 
 
+# Jobs that are internal helpers and must not appear in run-all loops
+_INTERNAL_JOBS: frozenset[str] = frozenset({"domain_lessons_planner"})
+
+
+def _build_planner_prompt(source: dict, template_path: str) -> str:
+    """Build the planner prompt for a single source.
+
+    Reads the template, builds a locator index (locator + preview + type),
+    and appends the RENDERED INPUTS block matching the pattern of render_prompt_for_job.
+    """
+    import json as _json
+    template = Path(template_path).read_text(encoding="utf-8")
+    locator_index = [
+        {
+            "locator": snip.get("locator", ""),
+            "type": snip.get("type", "text"),
+            "preview": snip.get("text", "")[:300],
+        }
+        for snip in source.get("snippets", [])
+        if snip.get("locator")
+    ]
+    inputs = {
+        "source_id": source.get("source_id", source.get("doc_id", "")),
+        "source_title": source.get("source_title", ""),
+        "locator_index": locator_index,
+        "category_names": list(_DOMAIN_LESSONS_CATEGORIES),
+    }
+    return (
+        template.rstrip()
+        + "\n\n## RENDERED INPUTS (machine-generated)\n"
+        + _json.dumps(inputs, ensure_ascii=False, indent=2)
+        + "\n"
+    )
+
+
+def _check_planner_locators(planner_output: dict, sources_by_id: dict) -> list[str]:
+    """Return error strings for any segment locator not present in the source snippets.
+
+    Empty list = all locators valid.
+    """
+    errors: list[str] = []
+    for plan in planner_output.get("plans", []):
+        sid = plan.get("source_id", "")
+        src = sources_by_id.get(sid)
+        if src is None:
+            errors.append(f"source_id={sid!r} not found in available sources")
+            continue
+        available = {snip.get("locator", "") for snip in src.get("snippets", [])}
+        for seg in plan.get("segments", []):
+            for loc in seg.get("locators", []):
+                if loc and loc not in available:
+                    errors.append(
+                        f"source_id={sid!r} segment={seg.get('segment_id')!r} "
+                        f"references unknown locator {loc!r}"
+                    )
+    return errors
+
+
+def _planner_to_batches(
+    plans: list[dict],
+    sources_by_id: dict,
+    max_excerpts: int = 5,
+    max_chars: int = 16_000,
+) -> list:
+    """Convert planner segment plans into extraction source_batches.
+
+    For each segment (sorted high->medium->low), collect matching snippets, apply
+    _snippet_sub_batches to enforce per-call limits.  Each sub-batch becomes one
+    element of the returned list — a single-source list compatible with the extractor.
+    """
+    _PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+    batches: list = []
+    for plan in plans:
+        sid = plan.get("source_id", "")
+        src = sources_by_id.get(sid)
+        if src is None:
+            continue
+        locator_to_snip = {
+            snip.get("locator", ""): snip
+            for snip in src.get("snippets", [])
+            if snip.get("locator")
+        }
+        segments = sorted(
+            plan.get("segments", []),
+            key=lambda s: _PRIORITY_ORDER.get(s.get("priority", "low"), 2),
+        )
+        for seg in segments:
+            seg_snips = [
+                locator_to_snip[loc]
+                for loc in seg.get("locators", [])
+                if loc in locator_to_snip
+            ]
+            if not seg_snips:
+                continue
+            for sub_snips in _snippet_sub_batches(seg_snips, max_excerpts, max_chars):
+                batches.append([{**src, "snippets": sub_snips}])
+    return batches
+
+
 _DOMAIN_LESSONS_CATEGORIES = (
     "proven_interventions",
     "lessons_learnt",
@@ -592,7 +853,7 @@ def _log_coverage_warnings(job_id: str, payload: dict, all_sources: list[dict]) 
 def _stamp_run_date(job_id: str, payload: dict) -> None:
     """Overwrite payload['generated_at'] with today's date for jobs where the LLM
     must not determine the run date (avoids hallucinated or stale dates)."""
-    if job_id in {"domain_solutions_from_evidence", "domain_lessons_option_b"}:
+    if job_id in {"domain_solutions_from_evidence", "domain_lessons_option_b", "domain_lessons_planner"}:
         from datetime import date
         payload["generated_at"] = date.today().isoformat()
 
@@ -748,6 +1009,8 @@ def cmd_run_all(args: argparse.Namespace) -> int:
     print()
 
     for job_id, job_def in registry.jobs.items():
+        if job_id in _INTERNAL_JOBS:
+            continue
         print(f"[{job_id}] Starting...")
 
         # Create a mock args namespace for this job
@@ -1054,7 +1317,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("run", help="Run a job (stub mode for now)")
     r.add_argument("--job", required=True, help="Job id (e.g., phase1_discovery_qa)")
-    r.add_argument("--mode", required=True, choices=["stub", "llm"], help="Execution mode")
+    r.add_argument("--mode", required=True, choices=["stub", "llm", "llm_planned"], help="Execution mode")
     r.add_argument("--spec-id", required=True, help="Spec identifier string to embed in output")
     r.add_argument("--country-name", default=None, help="Country name (Phase 1 only for now)")
     r.add_argument("--country-iso3", default=None, help="ISO3 (Phase 1 only for now)")

@@ -62,7 +62,7 @@ def generate_json(
     if repair_instructions:
         system_text += "\n\nVALIDATION ERRORS TO FIX:\n" + repair_instructions
 
-    _STRUCTURED_EXTRACTION_JOBS = {"domain_solutions_from_evidence", "domain_lessons_option_b"}
+    _STRUCTURED_EXTRACTION_JOBS = {"domain_solutions_from_evidence", "domain_lessons_option_b", "domain_lessons_planner"}
     extra_kwargs = (
         {"temperature": 0, "max_completion_tokens": 16384}
         if job_id in _STRUCTURED_EXTRACTION_JOBS

@@ -64,3 +64,10 @@ jobs:
     prompt_template: "prompts/domain_lessons_option_b.md"
     output_schema: "schemas/domain_lessons_option_b.schema.json"
     output_dir: "outputs/domain_lessons_option_b"
+
+  - job_id: domain_lessons_planner
+    label: "Domain Lessons Planner (internal — used by llm_planned mode)"
+    spec_file: "specs/domain_lessons_planner.json"
+    prompt_template: "prompts/domain_lessons_planner.md"
+    output_schema: "schemas/domain_lessons_planner.schema.json"
+    output_dir: "outputs/domain_lessons_planner"

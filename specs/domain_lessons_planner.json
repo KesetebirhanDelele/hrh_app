@@ -1,0 +1,18 @@
+{
+  "spec_id": "domain_lessons_planner_v1",
+  "spec_type": "domain_lessons_planner",
+  "version": "v1",
+  "description": "Planner pass for domain_lessons_option_b: scans source locator indexes and selects relevant segments for targeted extraction.",
+  "category_names": [
+    "proven_interventions",
+    "lessons_learnt",
+    "recommendations",
+    "prerequisites",
+    "operational_barriers",
+    "governance_process_dependencies",
+    "evidence_gaps_uncertainty",
+    "costs_resource_intensity",
+    "equity_implications"
+  ],
+  "priority_levels": ["high", "medium", "low"]
+}
