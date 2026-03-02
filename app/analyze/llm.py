@@ -21,7 +21,7 @@ class LLMResponse:
     text: str
 
 
-def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[str] = None, repair_instructions: Optional[str] = None) -> LLMResponse:
+def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[str] = None, repair_instructions: Optional[str] = None, job_id: Optional[str] = None) -> LLMResponse:
     """
     Generate JSON-only output from an LLM.
 
@@ -54,6 +54,8 @@ def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[s
     if repair_instructions:
         system_text += "\n\nVALIDATION ERRORS TO FIX:\n" + repair_instructions
 
+    extra_kwargs = {"temperature": 0} if job_id == "domain_solutions_from_evidence" else {}
+
     max_retries = 5
     for retry in range(max_retries):
         try:
@@ -64,6 +66,7 @@ def generate_json(prompt: str, provider: Optional[str] = None, model: Optional[s
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
+                **extra_kwargs,
             )
             break
         except RateLimitError as e:

@@ -28,7 +28,7 @@ def test_llm_generalized_rrr_uses_schema_and_passes(monkeypatch: pytest.MonkeyPa
         ]
     }
 
-    def fake_generate_json(prompt: str, provider=None, model=None, repair_instructions=None):
+    def fake_generate_json(prompt: str, provider=None, model=None, repair_instructions=None, job_id=None):
         return llm_mod.LLMResponse(text=json.dumps(payload))
 
     monkeypatch.setattr(llm_mod, "generate_json", fake_generate_json)

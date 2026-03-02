@@ -20,7 +20,11 @@
       "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py tests/test_merger.py -v)",
       "Bash(py -3.12 -c \"from app.render.md import render_markdown; print\\(''OK''\\)\")",
       "Bash(py -3.12 -c \"from app.render.xlsx import render_xlsx; print\\(''OK''\\)\")",
-      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py tests/test_merger.py -q)"
+      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py tests/test_merger.py -q)",
+      "Bash(py -3.12 -m pytest tests/test_llm_temperature.py tests/test_llm_retry.py -v)",
+      "Bash(py -3.12 -m pytest -q)",
+      "Bash(py -3.12 -m pytest tests/test_llm_temperature.py -v)",
+      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py -v)"
     ]
   }
 }

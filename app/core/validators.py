@@ -73,6 +73,58 @@ def _build_registry_for_dir(schema_dir: Path) -> Registry:
     return reg
 
 
+def _validate_domain_solutions_citations(payload: Dict[str, Any], schema_file: Path) -> None:
+    """Semantic citation-cap validation for domain_solutions_from_evidence.
+
+    Rules applied per solution:
+    - evidence_strength strong/moderate: at most 3 citations per doc_id
+    - evidence_strength weak:            at most 1 citation per doc_id
+    - Overall:                           at most 3 citations per solution
+    """
+    _MAX_PER_SOL = 3
+    _MAX_PER_DOC: Dict[str, int] = {"strong": 3, "moderate": 3, "weak": 1}
+
+    for domain in payload.get("domains", []):
+        d_id = domain.get("domain_id", "?")
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id", "?")
+            for sol in fa.get("solutions", []):
+                sol_id = sol.get("solution_id", "?")
+                strength = sol.get("evidence_strength", "weak")
+                allowed_per_doc = _MAX_PER_DOC.get(strength, 1)
+                citations = sol.get("citations", [])
+
+                errors: list[str] = []
+
+                # Overall cap
+                if len(citations) > _MAX_PER_SOL:
+                    errors.append(
+                        f"solution '{sol_id}' has {len(citations)} citations "
+                        f"(max {_MAX_PER_SOL} total per solution)"
+                    )
+
+                # Per-doc-id cap
+                doc_counts: Dict[str, int] = {}
+                for cit in citations:
+                    doc_id = cit.get("doc_id", "")
+                    doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+                for doc_id, count in doc_counts.items():
+                    if count > allowed_per_doc:
+                        errors.append(
+                            f"solution '{sol_id}' (evidence_strength='{strength}'): "
+                            f"doc_id '{doc_id}' has {count} citations "
+                            f"(max {allowed_per_doc} per doc_id for this evidence_strength — "
+                            f"remove or consolidate extra citations from this source)"
+                        )
+
+                if errors:
+                    raise SchemaValidationError(
+                        schema_path=str(schema_file),
+                        message=f"Citation policy violation in domain='{d_id}', focus_area='{fa_id}'",
+                        errors=errors,
+                    )
+
+
 def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optional[str] = None) -> None:
     """
     Validate an output payload against a JSON Schema (Draft 2020-12).
@@ -108,6 +160,10 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
             message="Output failed schema validation",
             errors=formatted,
         )
+
+    # Job-specific semantic validation
+    if payload.get("job_id") == "domain_solutions_from_evidence":
+        _validate_domain_solutions_citations(payload, schema_file)
 
     # Optional strict gate: citations must have real identifiers
     if _strict_citations_enabled():

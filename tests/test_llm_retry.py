@@ -49,7 +49,7 @@ def test_llm_retry_repairs_schema_failure(monkeypatch: pytest.MonkeyPatch) -> No
         ]
     }
 
-    def fake_generate_json(prompt: str, provider=None, model=None, repair_instructions=None):
+    def fake_generate_json(prompt: str, provider=None, model=None, repair_instructions=None, job_id=None):
         calls["n"] += 1
         text = json.dumps(bad_payload if calls["n"] == 1 else good_payload)
         return llm_mod.LLMResponse(text=text)

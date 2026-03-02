@@ -181,7 +181,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # LLM call — skip per-item schema validation (partial output won't
                 # match the full schema; only the merged result is validated)
                 payload = _llm_call_with_retry(
-                    rendered_prompt, generate_json, LLMNotConfigured, _json
+                    rendered_prompt, generate_json, LLMNotConfigured, _json, job_id=args.job
                 )
                 if payload is None:
                     print(f"  Warning: no valid output for item {item_idx}", file=sys.stderr)
@@ -203,12 +203,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                     print(f"Merge failed: {e}", file=sys.stderr)
                     return 3
 
+            _stamp_run_date(args.job, final_payload)
             out_path.write_text(
                 _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
 
             try:
                 validate_output(final_payload, schema_rel)
+                if args.job == "domain_solutions_from_evidence" and all_sources:
+                    _validate_snippet_verbatim(final_payload, all_sources)
                 print(f"Wrote: {out_path}")
                 print("VALID ✅")
                 return 0
@@ -265,7 +268,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     Path(tmp_sources_path).unlink(missing_ok=True)
 
             payload = _llm_call_with_retry(
-                rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel
+                rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel, job_id=args.job
             )
             if payload is None:
                 print(f"  Warning: no valid output for batch {batch_idx}", file=sys.stderr)
@@ -292,12 +295,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"Merge failed: {e}", file=sys.stderr)
                 return 3
 
+        _stamp_run_date(args.job, final_payload)
         out_path.write_text(
             _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
         try:
             validate_output(final_payload, schema_rel)
+            if args.job == "domain_solutions_from_evidence" and all_sources:
+                _validate_snippet_verbatim(final_payload, all_sources)
             print(f"Wrote: {out_path}")
             print("VALID ✅")
             return 0
@@ -361,7 +367,77 @@ def _clean_citations(payload: dict) -> dict:
     return _walk(payload)
 
 
-def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel=None):
+def _validate_snippet_verbatim(payload: dict, all_sources: list[dict]) -> None:
+    """For domain_solutions_from_evidence: verify every citation.snippet appears
+    verbatim (as a substring) in the matching source excerpt text.
+
+    Lookup: doc_id → source_id, locator → snippets[].locator → snippets[].text.
+    Collects all mismatches before raising so the repair loop sees every error.
+    """
+    from app.core.validators import SchemaValidationError
+
+    # Build lookup: {source_id: {locator: text}}
+    excerpt_map: dict[str, dict[str, str]] = {}
+    for src in all_sources:
+        sid = src.get("source_id", "")
+        if not sid:
+            continue
+        excerpt_map[sid] = {
+            snip.get("locator", ""): snip.get("text", "")
+            for snip in src.get("snippets", [])
+            if snip.get("locator") and snip.get("text")
+        }
+
+    errors: list[str] = []
+    for domain in payload.get("domains", []):
+        for fa in domain.get("focus_areas", []):
+            for sol in fa.get("solutions", []):
+                sol_id = sol.get("solution_id", "?")
+                for cit in sol.get("citations", []):
+                    doc_id = cit.get("doc_id", "")
+                    locator = cit.get("locator", "")
+                    snippet = cit.get("snippet", "")
+
+                    if doc_id not in excerpt_map:
+                        errors.append(
+                            f"solution '{sol_id}', doc_id '{doc_id}': "
+                            "not found in loaded sources"
+                        )
+                        continue
+
+                    if locator not in excerpt_map[doc_id]:
+                        errors.append(
+                            f"solution '{sol_id}', doc_id '{doc_id}', "
+                            f"locator '{locator}': not found in source excerpts"
+                        )
+                        continue
+
+                    source_text = excerpt_map[doc_id][locator]
+                    if snippet not in source_text:
+                        prefix = snippet[:60].replace("\n", " ")
+                        errors.append(
+                            f"solution '{sol_id}', doc_id '{doc_id}', "
+                            f"locator '{locator}': snippet not found verbatim in source text "
+                            f"(snippet prefix: '{prefix}...')"
+                        )
+
+    if errors:
+        raise SchemaValidationError(
+            schema_path="(verbatim snippet check)",
+            message="Verbatim snippet validation failed for domain_solutions_from_evidence",
+            errors=errors,
+        )
+
+
+def _stamp_run_date(job_id: str, payload: dict) -> None:
+    """Overwrite payload['generated_at'] with today's date for jobs where the LLM
+    must not determine the run date (avoids hallucinated or stale dates)."""
+    if job_id == "domain_solutions_from_evidence":
+        from datetime import date
+        payload["generated_at"] = date.today().isoformat()
+
+
+def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel=None, job_id=None):
     """Call the LLM with up to 3 repair attempts. Returns parsed payload or None.
 
     When schema_rel is None, schema validation is skipped (useful for per-item
@@ -375,7 +451,7 @@ def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json
 
     for attempt in range(1, max_attempts + 1):
         try:
-            llm = generate_json(rendered_prompt, repair_instructions=repair_notes)
+            llm = generate_json(rendered_prompt, repair_instructions=repair_notes, job_id=job_id)
         except LLMNotConfigured as e:
             print(str(e), file=sys.stderr)
             return None

@@ -35,6 +35,40 @@ def _cap_citations_by_source(citations: List[Dict[str, Any]], max_cits: int = _M
         selected.append(cit)
     return selected
 
+def _cap_per_doc(citations: List[Dict[str, Any]], evidence_strength: str) -> List[Dict[str, Any]]:
+    """Apply per-doc-id citation cap based on evidence_strength.
+
+    - strong/moderate: keep up to 3 citations per doc_id
+    - weak:            keep only 1 citation per doc_id
+
+    When trimming, prefer the citation with a longer snippet (more informative).
+    Ties are resolved by original position (earlier wins).
+    Result preserves original overall order.
+    """
+    max_per_doc = 3 if evidence_strength in ("strong", "moderate") else 1
+
+    # Group citations by doc_id, recording original index for stable sort
+    doc_groups: Dict[str, List[tuple]] = {}
+    for i, cit in enumerate(citations):
+        doc_id = cit.get("doc_id", "")
+        if doc_id not in doc_groups:
+            doc_groups[doc_id] = []
+        doc_groups[doc_id].append((i, cit))
+
+    # Decide which original indices to keep
+    keep: set[int] = set()
+    for entries in doc_groups.values():
+        if len(entries) <= max_per_doc:
+            keep.update(i for i, _ in entries)
+        else:
+            # Sort: longer snippet first; earlier index breaks ties
+            ranked = sorted(entries, key=lambda x: (-len(x[1].get("snippet", "")), x[0]))
+            keep.update(i for i, _ in ranked[:max_per_doc])
+
+    # Reconstruct preserving original order
+    return [cit for i, cit in enumerate(citations) if i in keep]
+
+
 MERGE_CONFIG: Dict[str, Dict[str, Any]] = {
     "phase1_discovery_qa": {
         "array_key": "questions",
@@ -206,6 +240,9 @@ def _merge_domain_solutions(partial_outputs: List[Dict[str, Any]]) -> Dict[str, 
                             if key not in seen_cits:
                                 seen_cits.add(key)
                                 existing.setdefault("citations", []).append(cit)
+                        existing["citations"] = _cap_per_doc(
+                            existing["citations"], existing.get("evidence_strength", "weak")
+                        )
                         existing["citations"] = _cap_citations_by_source(existing["citations"])
 
     # Reconstruct domains list preserving order from base, filling in merged solutions

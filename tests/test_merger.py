@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.analyze.merger import merge_outputs, _merge_evidence
+from app.analyze.merger import merge_outputs, _merge_evidence, _cap_per_doc
 
 
 # ---------------------------------------------------------------------------
@@ -157,3 +157,102 @@ class TestMergeOtherJobs:
     def test_unknown_job_raises(self) -> None:
         with pytest.raises(KeyError):
             merge_outputs("nonexistent_job", [{"data": 1}, {"data": 2}])
+
+
+# ---------------------------------------------------------------------------
+# _cap_per_doc + merge_outputs — domain_solutions_from_evidence
+# ---------------------------------------------------------------------------
+
+def _ds_partial(title: str, evidence_strength: str, citations: list) -> dict:
+    """Build a minimal domain_solutions_from_evidence partial payload."""
+    return {
+        "job_id": "domain_solutions_from_evidence",
+        "target_country": "Global",
+        "generated_at": "2026-02-28",
+        "domains": [{
+            "domain_id": "accountability",
+            "focus_areas": [{
+                "focus_area_id": "supervision_models",
+                "solutions": [{
+                    "solution_id": "accountability_supervision_models_1",
+                    "title": title,
+                    "description": "Test.",
+                    "mechanism": "Test mechanism.",
+                    "implementation_conditions": [],
+                    "evidence_strength": evidence_strength,
+                    "citations": citations,
+                }]
+            }]
+        }]
+    }
+
+
+class TestCapPerDoc:
+    def test_weak_caps_to_1_per_doc(self) -> None:
+        """_cap_per_doc keeps only 1 citation per doc_id for weak solutions."""
+        cits = [
+            {"doc_id": "SRC1", "locator": "p.1", "snippet": "Short."},
+            {"doc_id": "SRC1", "locator": "p.2", "snippet": "Longer snippet here."},
+        ]
+        result = _cap_per_doc(cits, "weak")
+        assert len(result) == 1
+        # Longer snippet should be preferred
+        assert result[0]["locator"] == "p.2"
+
+    def test_strong_caps_to_3_per_doc(self) -> None:
+        """_cap_per_doc keeps up to 3 citations per doc_id for strong solutions."""
+        cits = [
+            {"doc_id": "SRC1", "locator": "p.1", "snippet": "A."},
+            {"doc_id": "SRC1", "locator": "p.2", "snippet": "BB."},
+            {"doc_id": "SRC1", "locator": "p.3", "snippet": "CCC."},
+            {"doc_id": "SRC1", "locator": "p.4", "snippet": "X."},  # tied-shortest, later → dropped
+        ]
+        result = _cap_per_doc(cits, "strong")
+        assert len(result) == 3
+        locators = {c["locator"] for c in result}
+        assert "p.3" in locators   # longest snippet, always kept
+        assert "p.4" not in locators  # tied-shortest but latest index, dropped
+
+    def test_preserves_order(self) -> None:
+        """Result preserves the original relative order of kept citations."""
+        cits = [
+            {"doc_id": "SRC1", "locator": "p.1", "snippet": "AA."},
+            {"doc_id": "SRC2", "locator": "p.2", "snippet": "B."},
+            {"doc_id": "SRC1", "locator": "p.3", "snippet": "A."},  # trimmed by weak cap
+        ]
+        result = _cap_per_doc(cits, "weak")
+        # Both doc_ids get 1 each; SRC1 keeps "p.1" (longer snippet than "p.3")
+        assert [c["locator"] for c in result] == ["p.1", "p.2"]
+
+
+class TestMergeDomainSolutions:
+    def test_weak_merge_caps_citations_to_1_per_doc(self) -> None:
+        """Merging two weak-solution partials from same doc_id yields only 1 citation."""
+        p1 = _ds_partial("Test Solution", "weak",
+                         [{"doc_id": "SRC1", "locator": "p.1", "snippet": "Short."}])
+        p2 = _ds_partial("test solution", "weak",   # same title (case-insensitive)
+                         [{"doc_id": "SRC1", "locator": "p.2", "snippet": "Longer snippet here."}])
+        result = merge_outputs("domain_solutions_from_evidence", [p1, p2])
+        sol = result["domains"][0]["focus_areas"][0]["solutions"][0]
+        assert sol["evidence_strength"] == "weak"
+        assert len(sol["citations"]) == 1
+        # Longer snippet preferred
+        assert sol["citations"][0]["locator"] == "p.2"
+
+    def test_strong_merge_caps_citations_to_3_per_doc(self) -> None:
+        """Merging strong-solution partials that total 4 same-doc citations yields 3."""
+        p1 = _ds_partial("Test Solution", "strong", [
+            {"doc_id": "SRC1", "locator": "p.1", "snippet": "A."},
+            {"doc_id": "SRC1", "locator": "p.2", "snippet": "BB."},
+        ])
+        p2 = _ds_partial("test solution", "strong", [
+            {"doc_id": "SRC1", "locator": "p.3", "snippet": "CCC."},
+            {"doc_id": "SRC1", "locator": "p.4", "snippet": "X."},  # shortest tie, latest
+        ])
+        result = merge_outputs("domain_solutions_from_evidence", [p1, p2])
+        sol = result["domains"][0]["focus_areas"][0]["solutions"][0]
+        assert sol["evidence_strength"] == "strong"
+        assert len(sol["citations"]) == 3
+        locators = {c["locator"] for c in sol["citations"]}
+        assert "p.3" in locators    # longest snippet
+        assert "p.4" not in locators  # dropped

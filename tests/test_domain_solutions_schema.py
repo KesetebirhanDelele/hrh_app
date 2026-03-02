@@ -1,9 +1,11 @@
 """Schema validation tests for domain_solutions_from_evidence."""
 import copy
+from datetime import date
 
 import pytest
 
 from app.core.validators import SchemaValidationError, validate_output
+from app.app import _stamp_run_date, _validate_snippet_verbatim
 
 SCHEMA = "schemas/domain_solutions_from_evidence.schema.json"
 
@@ -111,3 +113,128 @@ def test_additional_property_on_citation_fails() -> None:
     bad["domains"][0]["focus_areas"][0]["solutions"][0]["citations"][0]["source_url"] = "https://example.org"
     with pytest.raises(SchemaValidationError):
         validate_output(bad, SCHEMA)
+
+
+# ── Citation cap validator tests ────────────────────────────────────────────
+
+def _make_cit(doc_id: str, locator: str, snippet: str = "A short verbatim excerpt.") -> dict:
+    return {"doc_id": doc_id, "locator": locator, "snippet": snippet}
+
+
+def _payload_with_cits(evidence_strength: str, citations: list) -> dict:
+    """Build a minimal valid payload whose single solution has the given citations."""
+    import copy
+    p = copy.deepcopy(VALID_PAYLOAD)
+    sol = p["domains"][0]["focus_areas"][0]["solutions"][0]
+    sol["evidence_strength"] = evidence_strength
+    sol["citations"] = citations
+    return p
+
+
+def test_validator_passes_strong_with_3_same_doc() -> None:
+    """strong solution: 3 citations from the same doc_id is within policy."""
+    cits = [_make_cit("SRC1", f"p.{i}") for i in range(1, 4)]
+    validate_output(_payload_with_cits("strong", cits), SCHEMA)
+
+
+def test_validator_fails_strong_with_4_same_doc() -> None:
+    """strong solution: 4 citations from the same doc_id exceeds both per-doc (3) and overall (3) caps."""
+    cits = [_make_cit("SRC1", f"p.{i}") for i in range(1, 5)]
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_output(_payload_with_cits("strong", cits), SCHEMA)
+    msg = str(exc_info.value)
+    assert "SRC1" in msg
+
+
+def test_validator_passes_weak_with_1_same_doc() -> None:
+    """weak solution: 1 citation from a doc_id is within policy."""
+    validate_output(_payload_with_cits("weak", [_make_cit("SRC1", "p.1")]), SCHEMA)
+
+
+def test_validator_fails_weak_with_2_same_doc() -> None:
+    """weak solution: 2 citations from the same doc_id exceeds per-doc cap (1)."""
+    cits = [_make_cit("SRC1", "p.1"), _make_cit("SRC1", "p.2")]
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_output(_payload_with_cits("weak", cits), SCHEMA)
+    msg = str(exc_info.value)
+    assert "SRC1" in msg
+    assert "weak" in msg
+
+
+# ── generated_at stamping tests ────────────────────────────────────────────
+
+def test_stamp_run_date_overwrites_wrong_date() -> None:
+    """_stamp_run_date replaces a hallucinated LLM date with today's date."""
+    payload = {"generated_at": "2023-10-15"}
+    _stamp_run_date("domain_solutions_from_evidence", payload)
+    assert payload["generated_at"] == date.today().isoformat()
+
+
+def test_stamp_run_date_does_not_affect_other_jobs() -> None:
+    """_stamp_run_date is a no-op for all other job IDs."""
+    payload = {"generated_at": "2023-10-15"}
+    _stamp_run_date("rrr_evidence_matrix", payload)
+    assert payload["generated_at"] == "2023-10-15"
+
+
+def test_stamped_payload_passes_schema() -> None:
+    """After stamping, the payload must still pass full schema validation."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["generated_at"] = "2023-10-15"  # wrong date injected by LLM
+    _stamp_run_date("domain_solutions_from_evidence", payload)
+    assert payload["generated_at"] == date.today().isoformat()
+    validate_output(payload, SCHEMA)
+
+
+# ── Verbatim snippet validator tests ────────────────────────────────────────
+
+# A tiny sources fixture whose single excerpt matches VALID_PAYLOAD's citation.
+_SOURCES_FIXTURE = [
+    {
+        "source_id": "SRC1",
+        "source_title": "Test Source",
+        "snippets": [
+            {
+                "locator": "Section 3.2, p. 45",
+                "text": "Districts using structured checklists saw a 23% improvement in protocol adherence among HEWs.",
+                "type": "text",
+            }
+        ],
+    }
+]
+
+
+def test_verbatim_snippet_passes() -> None:
+    """Exact substring of source text passes the verbatim check."""
+    _validate_snippet_verbatim(copy.deepcopy(VALID_PAYLOAD), _SOURCES_FIXTURE)
+
+
+def test_verbatim_snippet_fails_garbled() -> None:
+    """A paraphrased (non-verbatim) snippet raises SchemaValidationError."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["solutions"][0]["citations"][0]["snippet"] = (
+        "Districts using checklists saw improvements in adherence."  # paraphrased
+    )
+    with pytest.raises(SchemaValidationError) as exc_info:
+        _validate_snippet_verbatim(payload, _SOURCES_FIXTURE)
+    msg = str(exc_info.value)
+    assert "SRC1" in msg
+    assert "verbatim" in msg.lower()
+
+
+def test_verbatim_snippet_fails_unknown_doc_id() -> None:
+    """A doc_id absent from loaded sources raises SchemaValidationError."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["solutions"][0]["citations"][0]["doc_id"] = "SRC99"
+    with pytest.raises(SchemaValidationError) as exc_info:
+        _validate_snippet_verbatim(payload, _SOURCES_FIXTURE)
+    assert "SRC99" in str(exc_info.value)
+
+
+def test_verbatim_snippet_fails_unknown_locator() -> None:
+    """A locator absent from the source's excerpts raises SchemaValidationError."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["solutions"][0]["citations"][0]["locator"] = "p. 999"
+    with pytest.raises(SchemaValidationError) as exc_info:
+        _validate_snippet_verbatim(payload, _SOURCES_FIXTURE)
+    assert "p. 999" in str(exc_info.value)
