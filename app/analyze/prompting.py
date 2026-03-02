@@ -45,39 +45,96 @@ def _trim_sources(
 ) -> List[Dict[str, Any]]:
     """Return a copy of *sources* with snippets trimmed to fit a character budget.
 
-    Distributes the budget evenly across sources, then fills remaining budget
-    with leftovers. Tables are prioritised over plain text within each source.
-    Sources always keep their metadata even if all snippets are dropped.
+    The budget is split 50/50 between text snippets and table snippets so that
+    both types survive trimming.  If one type exhausts its allocation before the
+    other, leftover budget spills to the remaining type.  Within each type,
+    document ordering is preserved.  At least one snippet of each type is
+    guaranteed to be included when that type is present (even if it exceeds the
+    per-type allocation).
+
+    Sources always retain their metadata even when all their snippets are dropped.
     """
     if max_chars <= 0:
         return [{**s, "snippets": []} for s in sources]
 
-    total_chars = sum(
-        len(snip.get("text", "")) for s in sources for snip in s.get("snippets", [])
-    )
+    # Collect all snippets globally, preserving source index for reassembly
+    all_texts: list[tuple[int, dict]] = []   # (source_idx, snip)
+    all_tables: list[tuple[int, dict]] = []
+    for src_idx, src in enumerate(sources):
+        for snip in src.get("snippets", []):
+            if snip.get("type") == "table":
+                all_tables.append((src_idx, snip))
+            else:
+                all_texts.append((src_idx, snip))
+
+    total_chars = sum(len(s.get("text", "")) for _, s in all_texts + all_tables)
     if total_chars <= max_chars:
-        return sources  # everything fits
+        return sources  # everything fits, no trimming needed
 
-    # Fair-share budget per source
-    n_sources = len(sources) or 1
-    per_source = max_chars // n_sources
-    trimmed: list[Dict[str, Any]] = []
-    remaining_budget = max_chars
+    # --- Phase 1: fill text and table budgets independently (50/50 split) ---
+    text_budget = max_chars // 2
+    table_budget = max_chars - text_budget  # absorbs odd byte
 
-    for src in sources:
-        snips = src.get("snippets", [])
-        # Prioritise tables, then text
-        sorted_snips = sorted(snips, key=lambda s: 0 if s.get("type") == "table" else 1)
-        kept: list[dict] = []
+    def _fill(pool: list[tuple[int, dict]], budget: int) -> tuple[list[tuple[int, dict]], int]:
+        """Greedily fill *budget* from *pool* (preserve pool order).
+
+        Always admits at least the first item even if it alone exceeds the budget,
+        ensuring neither type is completely starved when content exists.
+
+        Returns (kept_items, chars_used).
+        """
+        kept: list[tuple[int, dict]] = []
         used = 0
-        budget = min(per_source, remaining_budget)
-        for snip in sorted_snips:
+        for i, (src_idx, snip) in enumerate(pool):
             size = len(snip.get("text", ""))
             if used + size <= budget:
-                kept.append(snip)
+                kept.append((src_idx, snip))
                 used += size
-        remaining_budget -= used
-        trimmed.append({**src, "snippets": kept})
+            elif i == 0 and not kept:
+                # Guarantee: include the very first item even if oversized
+                kept.append((src_idx, snip))
+                used += size
+        return kept, used
+
+    kept_texts, text_used = _fill(all_texts, text_budget)
+    kept_tables, table_used = _fill(all_tables, table_budget)
+
+    # --- Phase 2: spill leftover budget ---
+    text_leftover = text_budget - text_used
+    table_leftover = table_budget - table_used
+
+    kept_text_set = set(id(s) for _, s in kept_texts)
+    kept_table_set = set(id(s) for _, s in kept_tables)
+
+    if table_leftover > 0:
+        for src_idx, snip in all_texts:
+            if id(snip) not in kept_text_set:
+                size = len(snip.get("text", ""))
+                if size <= table_leftover:
+                    kept_texts.append((src_idx, snip))
+                    kept_text_set.add(id(snip))
+                    table_leftover -= size
+
+    if text_leftover > 0:
+        for src_idx, snip in all_tables:
+            if id(snip) not in kept_table_set:
+                size = len(snip.get("text", ""))
+                if size <= text_leftover:
+                    kept_tables.append((src_idx, snip))
+                    kept_table_set.add(id(snip))
+                    text_leftover -= size
+
+    # --- Reassemble: bucket kept snippets back into their source slots ---
+    kept_by_src: dict[int, list[dict]] = {i: [] for i in range(len(sources))}
+    for src_idx, snip in kept_texts + kept_tables:
+        kept_by_src[src_idx].append(snip)
+
+    # Restore original snippet ordering within each source
+    trimmed: list[Dict[str, Any]] = []
+    for src_idx, src in enumerate(sources):
+        kept_set = {id(s) for s in kept_by_src[src_idx]}
+        ordered = [s for s in src.get("snippets", []) if id(s) in kept_set]
+        trimmed.append({**src, "snippets": ordered})
 
     return trimmed
 
@@ -196,6 +253,15 @@ def render_prompt_for_job(
         if country_iso3:
             inputs["country_iso3"] = country_iso3
 
+    elif job_id == "domain_lessons_option_b":
+        if not country_name:
+            raise ValueError("country_name is required for domain_lessons_option_b")
+        inputs["target_country"] = country_name
+        inputs["domains"] = spec.get("domains", [])
+        inputs["categories"] = spec.get("categories", {})
+        if country_iso3:
+            inputs["country_iso3"] = country_iso3
+
     else:
         raise KeyError(f"render_prompt_for_job: unsupported job_id '{job_id}'")
 
@@ -205,7 +271,8 @@ def render_prompt_for_job(
     # Add source_id enforcement instruction if allowed_sources provided.
     # Skipped for domain_solutions_from_evidence — its LocalCitation uses doc_id, not source_id;
     # injecting a source_id instruction causes additionalProperties validation failures.
-    if sources_path and inputs.get("allowed_sources") and job_id != "domain_solutions_from_evidence":
+    _doc_id_jobs = {"domain_solutions_from_evidence", "domain_lessons_option_b"}
+    if sources_path and inputs.get("allowed_sources") and job_id not in _doc_id_jobs:
         final_prompt += "\n## IMPORTANT: Source ID Enforcement\n"
         final_prompt += "When citing from the allowed_sources above, you MUST include the source_id field in each citation.\n"
         final_prompt += "The source_id must match one of the source_id values from allowed_sources (e.g., SRC1, SRC2, etc.).\n"

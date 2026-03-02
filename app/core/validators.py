@@ -125,6 +125,83 @@ def _validate_domain_solutions_citations(payload: Dict[str, Any], schema_file: P
                     )
 
 
+_LESSON_ALL_CATEGORIES = (
+    "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+    "operational_barriers", "governance_process_dependencies",
+    "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+)
+
+
+def _validate_domain_lessons_item_id_uniqueness(payload: Dict[str, Any], schema_file: Path) -> None:
+    """Check that within each focus_area, all item_ids are unique across all 9 category arrays."""
+    for domain in payload.get("domains", []):
+        d_id = domain.get("domain_id", "?")
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id", "?")
+            seen: Dict[str, str] = {}   # item_id → first-seen category
+            duplicates: list[str] = []
+            for cat in _LESSON_ALL_CATEGORIES:
+                for item in fa.get(cat, []):
+                    iid = item.get("item_id", "")
+                    if not iid:
+                        continue
+                    if iid in seen:
+                        duplicates.append(
+                            f"item_id '{iid}' appears in both '{seen[iid]}' and '{cat}'"
+                        )
+                    else:
+                        seen[iid] = cat
+            if duplicates:
+                raise SchemaValidationError(
+                    schema_path=str(schema_file),
+                    message=f"Duplicate item_ids in domain='{d_id}', focus_area='{fa_id}'",
+                    errors=duplicates,
+                )
+
+
+# Keywords that signal genuine implementation-barrier framing (case-insensitive substring match).
+# Kept deliberately narrow to avoid false positives while catching causal/statistical framings.
+_OB_BARRIER_KEYWORDS = (
+    "lack of", "inadequate", "barrier", "constraint", "difficulty",
+    "hurdle", "challenge", "shortage",
+)
+
+
+def _validate_domain_lessons_barrier_snippets(payload: Dict[str, Any], schema_file: Path) -> None:
+    """operational_barriers items must have at least one citation snippet with barrier framing.
+
+    Items whose snippets only describe causes or statistical determinants (e.g. "causes
+    included insufficient supervision") should be in lessons_learnt instead.
+    """
+    for domain in payload.get("domains", []):
+        d_id = domain.get("domain_id", "?")
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id", "?")
+            for item in fa.get("operational_barriers", []):
+                item_id = item.get("item_id", "?")
+                snippets = [cit.get("snippet", "") for cit in item.get("citations", [])]
+                has_keyword = any(
+                    kw in snip.lower()
+                    for snip in snippets
+                    for kw in _OB_BARRIER_KEYWORDS
+                )
+                if not has_keyword:
+                    raise SchemaValidationError(
+                        schema_path=str(schema_file),
+                        message=(
+                            f"operational_barriers item '{item_id}' in domain='{d_id}', "
+                            f"focus_area='{fa_id}' has no citation snippet with barrier framing — "
+                            f"if this describes a cause or determinant, use lessons_learnt "
+                            f"(evidence_type=determinant_mechanism) instead"
+                        ),
+                        errors=[
+                            f"None of the {len(snippets)} snippet(s) contain a barrier keyword "
+                            f"({', '.join(repr(k) for k in _OB_BARRIER_KEYWORDS)}). "
+                            f"Snippet(s): " + "; ".join(f'"{s[:100]}"' for s in snippets)
+                        ],
+                    )
+
+
 def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optional[str] = None) -> None:
     """
     Validate an output payload against a JSON Schema (Draft 2020-12).
@@ -165,6 +242,10 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
     if payload.get("job_id") == "domain_solutions_from_evidence":
         _validate_domain_solutions_citations(payload, schema_file)
 
+    if payload.get("job_id") == "domain_lessons_option_b":
+        _validate_domain_lessons_item_id_uniqueness(payload, schema_file)
+        _validate_domain_lessons_barrier_snippets(payload, schema_file)
+
     # Optional strict gate: citations must have real identifiers
     if _strict_citations_enabled():
         def walk(obj, path="$"):
@@ -177,17 +258,19 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
                     isbn = obj.get("isbn")
 
                     sid = obj.get("source_id")
+                    did = obj.get("doc_id")  # LocalCitation identifier (domain_lessons jobs)
                     has_source_id = isinstance(sid, str) and sid.strip() != ""
+                    has_doc_id = isinstance(did, str) and did.strip() != ""
                     has_http_url = isinstance(su, str) and _is_http_url(su)
                     has_ref = isinstance(ref, str) and ref.strip() != ""
                     has_doi = isinstance(doi, str) and doi.strip() != ""
                     has_isbn = isinstance(isbn, str) and isbn.strip() != ""
 
-                    if not (has_source_id or has_http_url or has_ref or has_doi or has_isbn):
+                    if not (has_source_id or has_doc_id or has_http_url or has_ref or has_doi or has_isbn):
                         raise SchemaValidationError(
                             schema_path=str(schema_file),
                             message="Strict citation validation failed (HRH_STRICT_CITATIONS=1)",
-                            errors=[f"{path} must include either a valid source_id, http(s) source_url, or a non-empty reference/doi/isbn."],
+                            errors=[f"{path} must include either a valid source_id, doc_id, http(s) source_url, or a non-empty reference/doi/isbn."],
                         )
                 for k, v in obj.items():
                     walk(v, f"{path}.{k}")

@@ -256,3 +256,146 @@ class TestMergeDomainSolutions:
         locators = {c["locator"] for c in sol["citations"]}
         assert "p.3" in locators    # longest snippet
         assert "p.4" not in locators  # dropped
+
+
+# ---------------------------------------------------------------------------
+# _merge_domain_lessons + merge_outputs — domain_lessons_option_b
+# ---------------------------------------------------------------------------
+
+def _empty_fa(fa_id: str) -> dict:
+    """Build a fully-populated focus area with all nine empty category arrays."""
+    return {
+        "focus_area_id": fa_id,
+        "proven_interventions": [],
+        "lessons_learnt": [],
+        "recommendations": [],
+        "prerequisites": [],
+        "operational_barriers": [],
+        "governance_process_dependencies": [],
+        "evidence_gaps_uncertainty": [],
+        "costs_resource_intensity": [],
+        "equity_implications": [],
+    }
+
+
+def _dl_partial(
+    pi_items: list | None = None,
+    cost_items: list | None = None,
+) -> dict:
+    """Minimal domain_lessons_option_b partial with one focus area."""
+    fa = _empty_fa("supervision_models")
+    if pi_items:
+        fa["proven_interventions"] = pi_items
+    if cost_items:
+        fa["costs_resource_intensity"] = cost_items
+    return {
+        "job_id": "domain_lessons_option_b",
+        "target_country": "Global",
+        "generated_at": "2026-03-01",
+        "domains": [{"domain_id": "accountability", "focus_areas": [fa]}],
+    }
+
+
+def _item(title: str, strength: str, doc_id: str, locator: str) -> dict:
+    return {
+        "item_id": "x",
+        "title": title,
+        "statement": f"Statement for {title}.",
+        "evidence_type": "intervention_effect",
+        "evidence_strength": strength,
+        "citations": [{"doc_id": doc_id, "source_title": "T", "locator": locator, "snippet": "S."}],
+    }
+
+
+def _cost(title: str, intensity: str, driver: str) -> dict:
+    return {
+        "item_id": "x",
+        "title": title,
+        "statement": "Cost statement.",
+        "intensity": intensity,
+        "cost_drivers": [driver],
+        "citations": [{"doc_id": "SRC1", "source_title": "T", "locator": "p.1", "snippet": "S."}],
+    }
+
+
+class TestMergeDomainLessons:
+    def test_single_output_passthrough(self) -> None:
+        output = _dl_partial([_item("Checklists", "weak", "SRC1", "p.1")])
+        result = merge_outputs("domain_lessons_option_b", [output])
+        assert result is output
+
+    def test_two_partials_different_titles_both_appear(self) -> None:
+        """Items with different titles from two partials are both kept."""
+        p1 = _dl_partial([_item("Checklists", "weak", "SRC1", "p.1")])
+        p2 = _dl_partial([_item("Peer Supervision", "moderate", "SRC2", "p.5")])
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        pi = result["domains"][0]["focus_areas"][0]["proven_interventions"]
+        titles = {i["title"] for i in pi}
+        assert "Checklists" in titles
+        assert "Peer Supervision" in titles
+
+    def test_same_title_deduplicates_and_upgrades_strength(self) -> None:
+        """Same title in two partials → one item with upgraded evidence_strength."""
+        p1 = _dl_partial([_item("Checklists", "weak", "SRC1", "p.1")])
+        p2 = _dl_partial([_item("checklists", "strong", "SRC2", "p.9")])  # same title, case-insensitive
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        pi = result["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(pi) == 1
+        assert pi[0]["evidence_strength"] == "strong"
+        assert len(pi[0]["citations"]) == 2
+
+    def test_same_title_deduplicates_citations_by_doc_and_locator(self) -> None:
+        """Identical (doc_id, locator) citations are not duplicated."""
+        cit = {"doc_id": "SRC1", "source_title": "T", "locator": "p.1", "snippet": "S."}
+        item1 = {**_item("Checklists", "weak", "SRC1", "p.1"), "citations": [cit]}
+        item2 = {**_item("Checklists", "weak", "SRC1", "p.1"), "citations": [cit]}
+        p1 = _dl_partial([item1])
+        p2 = _dl_partial([item2])
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        pi = result["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(pi[0]["citations"]) == 1
+
+    def test_cost_item_intensity_upgrade(self) -> None:
+        """Lower intensity is upgraded when the same cost item appears in two partials."""
+        p1 = _dl_partial(cost_items=[_cost("Travel Budget", "low", "Vehicle fuel")])
+        p2 = _dl_partial(cost_items=[_cost("travel budget", "high", "Driver costs")])
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        cri = result["domains"][0]["focus_areas"][0]["costs_resource_intensity"]
+        assert len(cri) == 1
+        assert cri[0]["intensity"] == "high"
+        assert "Vehicle fuel" in cri[0]["cost_drivers"]
+        assert "Driver costs" in cri[0]["cost_drivers"]
+
+    def test_item_ids_renumbered_sequentially(self) -> None:
+        """After merge, item_ids follow the pattern {abbrev}_{n:03d}."""
+        p1 = _dl_partial([_item("Checklists", "weak", "SRC1", "p.1")])
+        p2 = _dl_partial([_item("Peer Supervision", "weak", "SRC2", "p.5")])
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        pi = result["domains"][0]["focus_areas"][0]["proven_interventions"]
+        ids = {i["item_id"] for i in pi}
+        assert "pi_001" in ids
+        assert "pi_002" in ids
+
+    def test_unique_item_ids_per_focus_area(self) -> None:
+        """After merge, all item_ids within a focus area are unique across all 9 categories."""
+        _ALL_CATS = (
+            "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+            "operational_barriers", "governance_process_dependencies",
+            "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+        )
+        p1 = _dl_partial(
+            pi_items=[_item("Checklists", "weak", "SRC1", "p.1")],
+            cost_items=[_cost("Travel Budget", "low", "Vehicle fuel")],
+        )
+        p2 = _dl_partial(
+            pi_items=[_item("Peer Supervision", "moderate", "SRC2", "p.5")],
+            cost_items=[_cost("travel budget", "high", "Driver costs")],
+        )
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        fa = result["domains"][0]["focus_areas"][0]
+        all_ids = [
+            item["item_id"]
+            for cat in _ALL_CATS
+            for item in fa.get(cat, [])
+        ]
+        assert len(all_ids) == len(set(all_ids)), f"Duplicate item_ids in focus area: {all_ids}"

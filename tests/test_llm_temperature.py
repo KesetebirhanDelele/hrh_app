@@ -42,6 +42,45 @@ def test_temperature_zero_for_domain_solutions(monkeypatch):
     assert mock_create.call_args.kwargs.get("temperature") == 0
 
 
+def test_temperature_zero_for_domain_lessons(monkeypatch):
+    """generate_json passes temperature=0 when job_id == 'domain_lessons_option_b'."""
+    monkeypatch.setenv("HRH_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    import app.analyze.llm as llm_mod
+    mock_create = _mock_openai(monkeypatch)
+
+    llm_mod.generate_json("test prompt", job_id="domain_lessons_option_b")
+
+    assert mock_create.call_args.kwargs.get("temperature") == 0
+
+
+def test_max_completion_tokens_set_for_structured_jobs(monkeypatch):
+    """generate_json passes max_completion_tokens=16384 for both structured extraction jobs."""
+    monkeypatch.setenv("HRH_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    import app.analyze.llm as llm_mod
+
+    for job_id in ("domain_solutions_from_evidence", "domain_lessons_option_b"):
+        mock_create = _mock_openai(monkeypatch)
+        llm_mod.generate_json("test prompt", job_id=job_id)
+        assert mock_create.call_args.kwargs.get("max_completion_tokens") == 16384, job_id
+
+
+def test_max_completion_tokens_absent_for_other_jobs(monkeypatch):
+    """generate_json does NOT set max_completion_tokens for non-structured jobs."""
+    monkeypatch.setenv("HRH_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    import app.analyze.llm as llm_mod
+    mock_create = _mock_openai(monkeypatch)
+
+    llm_mod.generate_json("test prompt", job_id="rrr_evidence_matrix")
+
+    assert "max_completion_tokens" not in mock_create.call_args.kwargs
+
+
 def test_no_temperature_for_other_job(monkeypatch):
     """generate_json does NOT set temperature for other job IDs."""
     monkeypatch.setenv("HRH_LLM_PROVIDER", "openai")

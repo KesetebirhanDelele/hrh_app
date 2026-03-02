@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "domain_lessons_option_b.schema.json",
+  "title": "Domain Lessons Option B Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "target_country", "generated_at", "domains"],
+  "properties": {
+    "job_id":         { "const": "domain_lessons_option_b" },
+    "target_country": { "$ref": "common.json#/$defs/NonEmptyString" },
+    "generated_at":   { "$ref": "common.json#/$defs/ISODate" },
+    "domains": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Domain" }
+    }
+  },
+  "$defs": {
+    "LocalCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["doc_id", "source_title", "locator", "snippet"],
+      "properties": {
+        "doc_id":       { "$ref": "common.json#/$defs/NonEmptyString" },
+        "source_title": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "locator":      { "$ref": "common.json#/$defs/NonEmptyString" },
+        "snippet":      { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "Item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "title", "statement", "evidence_type", "evidence_strength", "citations"],
+      "properties": {
+        "item_id":   { "$ref": "common.json#/$defs/NonEmptyString" },
+        "title":     { "$ref": "common.json#/$defs/NonEmptyString" },
+        "statement": { "$ref": "common.json#/$defs/NonEmptyString" },
+        "mechanism": { "type": "string" },
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "intervention_effect",
+            "validated_tool_or_metric",
+            "determinant_mechanism",
+            "recommendation_only"
+          ]
+        },
+        "evidence_strength": {
+          "type": "string",
+          "enum": ["strong", "moderate", "weak"]
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/LocalCitation" }
+        }
+      }
+    },
+    "CostItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "title", "statement", "intensity", "citations"],
+      "properties": {
+        "item_id":     { "$ref": "common.json#/$defs/NonEmptyString" },
+        "title":       { "$ref": "common.json#/$defs/NonEmptyString" },
+        "statement":   { "$ref": "common.json#/$defs/NonEmptyString" },
+        "intensity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "unknown"]
+        },
+        "cost_drivers": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" }
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/LocalCitation" }
+        }
+      }
+    },
+    "FocusArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "focus_area_id",
+        "proven_interventions",
+        "lessons_learnt",
+        "recommendations",
+        "prerequisites",
+        "operational_barriers",
+        "governance_process_dependencies",
+        "evidence_gaps_uncertainty",
+        "costs_resource_intensity",
+        "equity_implications"
+      ],
+      "properties": {
+        "focus_area_id": {
+          "type": "string",
+          "enum": [
+            "supervision_models",
+            "performance_contracts",
+            "community_or_social_accountability",
+            "enforcement_mechanisms",
+            "measurement_approaches",
+            "incentives_and_sanctions",
+            "deployment_housing_safety_workload_factors",
+            "task_design_and_task_shifting",
+            "time_use_optimization",
+            "digital_or_managerial_enablers",
+            "governance_arrangements",
+            "financing_and_incentives",
+            "political_economy_considerations"
+          ]
+        },
+        "proven_interventions":            { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "lessons_learnt":                  { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "recommendations":                 { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "prerequisites":                   { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "operational_barriers":            { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "governance_process_dependencies": { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "evidence_gaps_uncertainty":       { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "costs_resource_intensity":        { "type": "array", "items": { "$ref": "#/$defs/CostItem" } },
+        "equity_implications":             { "type": "array", "items": { "$ref": "#/$defs/Item" } }
+      }
+    },
+    "Domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain_id", "focus_areas"],
+      "properties": {
+        "domain_id": {
+          "type": "string",
+          "enum": ["accountability", "absenteeism", "productivity", "system_enablers"]
+        },
+        "focus_areas": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/FocusArea" }
+        }
+      }
+    }
+  }
+}

@@ -57,3 +57,10 @@ jobs:
     prompt_template: "prompts/domain_solutions_from_evidence.md"
     output_schema: "schemas/domain_solutions_from_evidence.schema.json"
     output_dir: "outputs/domain_solutions_from_evidence"
+
+  - job_id: domain_lessons_option_b
+    label: "Domain Lessons Option B (nine-category evidence extraction)"
+    spec_file: "specs/domain_lessons_option_b.json"
+    prompt_template: "prompts/domain_lessons_option_b.md"
+    output_schema: "schemas/domain_lessons_option_b.schema.json"
+    output_dir: "outputs/domain_lessons_option_b"

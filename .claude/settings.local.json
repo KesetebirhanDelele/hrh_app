@@ -24,7 +24,15 @@
       "Bash(py -3.12 -m pytest tests/test_llm_temperature.py tests/test_llm_retry.py -v)",
       "Bash(py -3.12 -m pytest -q)",
       "Bash(py -3.12 -m pytest tests/test_llm_temperature.py -v)",
-      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py -v)"
+      "Bash(py -3.12 -m pytest tests/test_domain_solutions_schema.py -v)",
+      "Bash(py -3.12 -m pytest tests/test_domain_lessons_option_b_schema.py -v)",
+      "Bash(HRH_STRICT_CITATIONS=1 py -3.12 -m pytest tests/test_domain_lessons_option_b_schema.py -v)",
+      "Bash(HRH_STRICT_CITATIONS=1 py -3.12 -m pytest -q)",
+      "Bash(HRH_STRICT_CITATIONS=1 py -3.12 -m pytest tests/test_merger.py -v)",
+      "Bash(HRH_STRICT_CITATIONS=1 python -m pytest -q)",
+      "Bash(py -3.12 -m app.app render-xlsx --job domain_lessons_option_b --file outputs/domain_lessons_option_b/GLOBAL_TEST_20260302_011250/output_llm.json)",
+      "Bash(HRH_STRICT_CITATIONS=1 python -m pytest tests/test_domain_lessons_option_b_schema.py -v)",
+      "Bash(HRH_STRICT_CITATIONS=1 python -m pytest tests/test_domain_lessons_option_b_schema.py tests/test_merger.py -v)"
     ]
   }
 }

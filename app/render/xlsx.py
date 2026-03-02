@@ -222,6 +222,105 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
         wb.save(out_path)
         return out_path
 
+    elif job_id == "domain_lessons_option_b":
+        _ITEM_CATS = (
+            "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+            "operational_barriers", "governance_process_dependencies",
+            "evidence_gaps_uncertainty", "equity_implications",
+        )
+        _COST_CAT = "costs_resource_intensity"
+
+        # Sheet 1: items — one row per Item across all 8 Item categories
+        ws.title = "items"
+        _write_header(ws, [
+            "domain_id", "focus_area_id", "category", "item_id", "title",
+            "evidence_type", "evidence_strength", "statement", "mechanism", "citations",
+        ])
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                for cat in _ITEM_CATS:
+                    for item in fa.get(cat, []):
+                        cit_lines = "\n".join(
+                            f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
+                            for c in item.get("citations", [])
+                        )
+                        ws.append([
+                            d_id, fa_id, cat,
+                            item.get("item_id", ""),
+                            item.get("title", ""),
+                            item.get("evidence_type", ""),
+                            item.get("evidence_strength", ""),
+                            item.get("statement", ""),
+                            item.get("mechanism", "") or "",
+                            cit_lines,
+                        ])
+        _autosize(ws)
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        # Sheet 2: costs — one row per CostItem
+        ws2 = wb.create_sheet("costs")
+        _write_header(ws2, [
+            "domain_id", "focus_area_id", "item_id", "title",
+            "intensity", "cost_drivers", "statement", "citations",
+        ])
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                for item in fa.get(_COST_CAT, []):
+                    cit_lines = "\n".join(
+                        f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
+                        for c in item.get("citations", [])
+                    )
+                    ws2.append([
+                        d_id, fa_id,
+                        item.get("item_id", ""),
+                        item.get("title", ""),
+                        item.get("intensity", ""),
+                        "; ".join(item.get("cost_drivers", []) or []),
+                        item.get("statement", ""),
+                        cit_lines,
+                    ])
+        _autosize(ws2)
+        for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row, min_col=1, max_col=ws2.max_column):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        # Sheet 3: citations — long format, one row per citation across all categories
+        ws3 = wb.create_sheet("citations")
+        _write_header(ws3, [
+            "domain_id", "focus_area_id", "category", "item_id", "title",
+            "source_title", "doc_id", "locator", "snippet",
+        ])
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                for cat in _ITEM_CATS + (_COST_CAT,):
+                    for item in fa.get(cat, []):
+                        for cit in item.get("citations", []):
+                            ws3.append([
+                                d_id, fa_id, cat,
+                                item.get("item_id", ""),
+                                item.get("title", ""),
+                                cit.get("source_title", "") or cit.get("doc_id", ""),
+                                cit.get("doc_id", ""),
+                                cit.get("locator", ""),
+                                cit.get("snippet", ""),
+                            ])
+        _autosize(ws3)
+        for row in ws3.iter_rows(min_row=2, max_row=ws3.max_row, min_col=1, max_col=ws3.max_column):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(out_path)
+        return out_path
+
     else:
         raise KeyError(f"render_xlsx: unsupported job_id '{job_id}'")
 

@@ -6,7 +6,33 @@ from typing import Any, Dict, List
 
 _QUALITY_RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
 _STRENGTH_RANK = {"strong": 3, "moderate": 2, "weak": 1}
+_INTENSITY_RANK = {"high": 4, "medium": 3, "low": 2, "unknown": 1}
 _MAX_CITATIONS_PER_SOLUTION = 3
+
+# Nine category arrays per focus-area in domain_lessons_option_b
+_ITEM_CATEGORIES = (
+    "proven_interventions",
+    "lessons_learnt",
+    "recommendations",
+    "prerequisites",
+    "operational_barriers",
+    "governance_process_dependencies",
+    "evidence_gaps_uncertainty",
+    "equity_implications",
+)
+_COST_CATEGORY = "costs_resource_intensity"
+_ALL_LESSON_CATEGORIES = _ITEM_CATEGORIES + (_COST_CATEGORY,)
+_CATEGORY_ABBREV: Dict[str, str] = {
+    "proven_interventions":            "pi",
+    "lessons_learnt":                  "ll",
+    "recommendations":                 "rec",
+    "prerequisites":                   "pre",
+    "operational_barriers":            "bar",
+    "governance_process_dependencies": "gov",
+    "evidence_gaps_uncertainty":       "gap",
+    "costs_resource_intensity":        "cost",
+    "equity_implications":             "eq",
+}
 
 
 def _cap_citations_by_source(citations: List[Dict[str, Any]], max_cits: int = _MAX_CITATIONS_PER_SOLUTION) -> List[Dict[str, Any]]:
@@ -267,6 +293,100 @@ def _merge_domain_solutions(partial_outputs: List[Dict[str, Any]]) -> Dict[str, 
     return base
 
 
+def _merge_domain_lessons(partial_outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge partial outputs for domain_lessons_option_b.
+
+    Walks domains → focus_areas → each of the nine category arrays, deduplicating
+    items by title (case-insensitive) and combining citations and strength fields.
+    """
+    base = dict(partial_outputs[0])
+
+    # Nested map: domain_id → focus_area_id → category → title_lower → item dict
+    merged_map: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
+
+    for output in partial_outputs:
+        for domain in output.get("domains", []):
+            d_id = domain.get("domain_id")
+            if not d_id:
+                continue
+            if d_id not in merged_map:
+                merged_map[d_id] = {}
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id")
+                if not fa_id:
+                    continue
+                if fa_id not in merged_map[d_id]:
+                    merged_map[d_id][fa_id] = {cat: {} for cat in _ALL_LESSON_CATEGORIES}
+                for cat in _ALL_LESSON_CATEGORIES:
+                    for item in fa.get(cat, []):
+                        title_key = item.get("title", "").strip().lower()
+                        if not title_key:
+                            continue
+                        cat_map = merged_map[d_id][fa_id][cat]
+                        if title_key not in cat_map:
+                            cat_map[title_key] = dict(item)
+                        else:
+                            existing = cat_map[title_key]
+                            if cat == _COST_CATEGORY:
+                                # Upgrade intensity
+                                e_rank = _INTENSITY_RANK.get(existing.get("intensity", "unknown"), 1)
+                                i_rank = _INTENSITY_RANK.get(item.get("intensity", "unknown"), 1)
+                                if i_rank > e_rank:
+                                    existing["intensity"] = item["intensity"]
+                                # Combine cost_drivers (deduplicate)
+                                seen_drivers: set[str] = set(existing.get("cost_drivers", []))
+                                for driver in item.get("cost_drivers", []):
+                                    if driver not in seen_drivers:
+                                        seen_drivers.add(driver)
+                                        existing.setdefault("cost_drivers", []).append(driver)
+                            else:
+                                # Upgrade evidence_strength
+                                e_rank = _STRENGTH_RANK.get(existing.get("evidence_strength", "weak"), 1)
+                                i_rank = _STRENGTH_RANK.get(item.get("evidence_strength", "weak"), 1)
+                                if i_rank > e_rank:
+                                    existing["evidence_strength"] = item["evidence_strength"]
+                                # Prefer incoming mechanism if existing is blank
+                                em = (existing.get("mechanism") or "").strip()
+                                im = (item.get("mechanism") or "").strip()
+                                if im and not em:
+                                    existing["mechanism"] = im
+                            # Combine citations (deduplicate by doc_id + locator)
+                            seen_cits: set[tuple] = {
+                                (c.get("doc_id", ""), c.get("locator", ""))
+                                for c in existing.get("citations", [])
+                            }
+                            for cit in item.get("citations", []):
+                                key = (cit.get("doc_id", ""), cit.get("locator", ""))
+                                if key not in seen_cits:
+                                    seen_cits.add(key)
+                                    existing.setdefault("citations", []).append(cit)
+                            existing["citations"] = _cap_citations_by_source(existing.get("citations", []))
+
+    # Reconstruct domains list preserving order from base, renumbering item_ids
+    result_domains = []
+    for domain in base.get("domains", []):
+        d_id = domain.get("domain_id")
+        fa_map = merged_map.get(d_id, {})
+        result_fas = []
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id")
+            cat_maps = fa_map.get(fa_id, {cat: {} for cat in _ALL_LESSON_CATEGORIES})
+            result_fa: Dict[str, Any] = {"focus_area_id": fa_id}
+            for cat in _ALL_LESSON_CATEGORIES:
+                abbrev = _CATEGORY_ABBREV[cat]
+                items = []
+                for n, item in enumerate(cat_maps.get(cat, {}).values(), 1):
+                    item = dict(item)
+                    item["item_id"] = f"{abbrev}_{n:03d}"
+                    items.append(item)
+                result_fa[cat] = items
+            result_fas.append(result_fa)
+        result_domains.append({"domain_id": d_id, "focus_areas": result_fas})
+
+    base["domains"] = result_domains
+    return base
+
+
 def merge_outputs(
     job_id: str,
     partial_outputs: List[Dict[str, Any]],
@@ -284,6 +404,9 @@ def merge_outputs(
 
     if job_id == "domain_solutions_from_evidence":
         return _merge_domain_solutions(partial_outputs)
+
+    if job_id == "domain_lessons_option_b":
+        return _merge_domain_lessons(partial_outputs)
 
     config = MERGE_CONFIG.get(job_id)
     if not config:

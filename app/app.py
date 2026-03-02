@@ -204,6 +204,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     return 3
 
             _stamp_run_date(args.job, final_payload)
+            _log_coverage_warnings(args.job, final_payload, all_sources)
             out_path.write_text(
                 _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
@@ -231,6 +232,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         else:
             # Per-source mode: one batch per source that has snippets
             source_batches = [[src] + sources_without_snippets for src in sources_with_snippets]
+
+        # Snippet sub-batching: for domain_lessons_option_b each source batch is
+        # split into smaller calls so the LLM sees a manageable excerpt payload.
+        _max_excerpts = int(os.getenv("HRH_MAX_EXCERPTS_PER_CALL", "5"))
+        _max_chars = int(os.getenv("HRH_MAX_CHARS_PER_CALL", "16000"))
+        source_batches = _expand_source_batches_for_job(
+            args.job, source_batches, _max_excerpts, _max_chars
+        )
 
         partial_outputs: list[dict] = []
         total_batches = len(source_batches)
@@ -296,6 +305,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 return 3
 
         _stamp_run_date(args.job, final_payload)
+        _log_coverage_warnings(args.job, final_payload, all_sources)
         out_path.write_text(
             _json.dumps(final_payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -429,10 +439,160 @@ def _validate_snippet_verbatim(payload: dict, all_sources: list[dict]) -> None:
         )
 
 
+def _snippet_sub_batches(
+    snippets: list[dict],
+    max_excerpts: int,
+    max_chars: int,
+) -> list[list[dict]]:
+    """Split a flat list of snippets into sub-batches.
+
+    A new batch is started when adding the next snippet would exceed either
+    *max_excerpts* or *max_chars*.  The very first snippet is always admitted
+    even if it alone exceeds *max_chars*, so no snippet is silently dropped.
+
+    Returns a non-empty list of batches.  An empty input returns [[]] so the
+    caller still makes one LLM call (with no excerpts).
+    """
+    if not snippets:
+        return [[]]
+
+    batches: list[list[dict]] = []
+    current: list[dict] = []
+    current_chars = 0
+
+    for snip in snippets:
+        size = len(snip.get("text", ""))
+        over_count = len(current) >= max_excerpts
+        over_chars = current_chars + size > max_chars and current  # never flush an empty batch
+        if over_count or over_chars:
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(snip)
+        current_chars += size
+
+    if current:
+        batches.append(current)
+
+    return batches
+
+
+def _expand_source_batches_for_job(
+    job_id: str,
+    source_batches: list,
+    max_excerpts: int = 5,
+    max_chars: int = 16_000,
+) -> list:
+    """Expand source_batches by snippet sub-batching for supported jobs.
+
+    For *domain_lessons_option_b*, every batch element is split so that each
+    resulting sub-batch contains at most *max_excerpts* snippets and at most
+    *max_chars* characters of excerpt text.  Metadata-only sources (no snippets)
+    are carried into every sub-batch unchanged so the LLM retains full source
+    context.
+
+    For all other jobs the input list is returned as-is.
+
+    Each element of the returned list maps 1-to-1 to one LLM call in the
+    legacy (non-RAG) path of cmd_run.
+    """
+    if job_id not in {"domain_lessons_option_b"}:
+        return source_batches
+
+    expanded: list = []
+    for batch in source_batches:
+        if batch is None:
+            expanded.append(None)
+            continue
+
+        with_snips = [s for s in batch if s.get("snippets")]
+        no_snips = [s for s in batch if not s.get("snippets")]
+
+        if not with_snips:
+            expanded.append(batch)
+            continue
+
+        for src in with_snips:
+            for sub_snips in _snippet_sub_batches(
+                src.get("snippets", []), max_excerpts, max_chars
+            ):
+                expanded.append([{**src, "snippets": sub_snips}] + no_snips)
+
+    return expanded
+
+
+_DOMAIN_LESSONS_CATEGORIES = (
+    "proven_interventions",
+    "lessons_learnt",
+    "recommendations",
+    "prerequisites",
+    "operational_barriers",
+    "governance_process_dependencies",
+    "evidence_gaps_uncertainty",
+    "costs_resource_intensity",
+    "equity_implications",
+)
+
+
+def _log_coverage_warnings(job_id: str, payload: dict, all_sources: list[dict]) -> None:
+    """Print a WARNING for each source whose citation coverage is suspiciously low.
+
+    Applies only to domain_lessons_option_b.  For every source that has ≥ 20
+    snippets in the input, if the fraction of its locators that appear in at
+    least one citation in *payload* is < 10 %, a WARNING line is printed to
+    stdout.  The run is NOT failed.
+
+    Coverage = cited_unique_locators / available_snippets.
+    """
+    if job_id != "domain_lessons_option_b":
+        return
+
+    # Build per-source info from input: source_id → {available, title}
+    source_info: dict[str, dict] = {}
+    for src in all_sources:
+        sid = src.get("source_id", "")
+        if not sid:
+            continue
+        source_info[sid] = {
+            "available": len(src.get("snippets", [])),
+            "title": src.get("source_title", sid),
+        }
+
+    # Collect unique cited locators per doc_id from the merged output
+    cited: dict[str, set[str]] = {}
+    for domain in payload.get("domains", []):
+        for fa in domain.get("focus_areas", []):
+            for cat in _DOMAIN_LESSONS_CATEGORIES:
+                for item in fa.get(cat, []):
+                    for cit in item.get("citations", []):
+                        doc_id = cit.get("doc_id", "")
+                        locator = cit.get("locator", "")
+                        if doc_id and locator:
+                            cited.setdefault(doc_id, set()).add(locator)
+
+    # Emit per-source warnings where applicable
+    for sid in sorted(source_info):
+        info = source_info[sid]
+        available = info["available"]
+        if available < 20:
+            continue
+        n_cited = len(cited.get(sid, set()))
+        coverage = n_cited / available
+        if coverage < 0.10:
+            pct = round(coverage * 100, 1)
+            print(
+                f"[COVERAGE WARNING] source_id={sid} "
+                f"source_title={info['title']!r} "
+                f"available_snippets={available} "
+                f"cited_locators={n_cited} "
+                f"coverage={pct}%"
+            )
+
+
 def _stamp_run_date(job_id: str, payload: dict) -> None:
     """Overwrite payload['generated_at'] with today's date for jobs where the LLM
     must not determine the run date (avoids hallucinated or stale dates)."""
-    if job_id == "domain_solutions_from_evidence":
+    if job_id in {"domain_solutions_from_evidence", "domain_lessons_option_b"}:
         from datetime import date
         payload["generated_at"] = date.today().isoformat()
 
