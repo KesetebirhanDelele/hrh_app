@@ -9,7 +9,7 @@ _STRENGTH_RANK = {"strong": 3, "moderate": 2, "weak": 1}
 _INTENSITY_RANK = {"high": 4, "medium": 3, "low": 2, "unknown": 1}
 _MAX_CITATIONS_PER_SOLUTION = 3
 
-# Nine category arrays per focus-area in domain_lessons_option_b
+# Ten category arrays per focus-area in domain_lessons_option_b
 _ITEM_CATEGORIES = (
     "proven_interventions",
     "lessons_learnt",
@@ -19,6 +19,7 @@ _ITEM_CATEGORIES = (
     "governance_process_dependencies",
     "evidence_gaps_uncertainty",
     "equity_implications",
+    "consequences_impacts",
 )
 _COST_CATEGORY = "costs_resource_intensity"
 _ALL_LESSON_CATEGORIES = _ITEM_CATEGORIES + (_COST_CATEGORY,)
@@ -32,6 +33,7 @@ _CATEGORY_ABBREV: Dict[str, str] = {
     "evidence_gaps_uncertainty":       "gap",
     "costs_resource_intensity":        "cost",
     "equity_implications":             "eq",
+    "consequences_impacts":            "con",
 }
 
 

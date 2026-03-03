@@ -191,6 +191,82 @@ def render_markdown(job_id: str, payload: Dict[str, Any]) -> str:
                         out.append("\n")
         return "".join(out).strip() + "\n"
 
+    if job_id == "domain_lessons_option_b":
+        meta2 = ["# Domain Lessons Option B\n"]
+        if payload.get("target_country"):
+            meta2.append(f"- **target_country**: {payload['target_country']}\n")
+        if payload.get("generated_at"):
+            meta2.append(f"- **generated_at**: {payload['generated_at']}\n")
+        out = ["\n".join(meta2) + "\n"]
+
+        _CAT_LABELS = {
+            "proven_interventions":            "Proven Interventions",
+            "lessons_learnt":                  "Lessons Learnt",
+            "recommendations":                 "Recommendations",
+            "prerequisites":                   "Prerequisites",
+            "operational_barriers":            "Operational Barriers",
+            "governance_process_dependencies": "Governance / Process Dependencies",
+            "evidence_gaps_uncertainty":       "Evidence Gaps & Uncertainty",
+            "costs_resource_intensity":        "Costs / Resource Intensity",
+            "equity_implications":             "Equity Implications",
+            "consequences_impacts":            "Consequences & Impacts",
+        }
+        _ITEM_CATS_MD = (
+            "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+            "operational_barriers", "governance_process_dependencies",
+            "evidence_gaps_uncertainty", "equity_implications", "consequences_impacts",
+        )
+        _COST_CAT_MD = "costs_resource_intensity"
+
+        def _render_item_cits(item: dict) -> List[str]:
+            parts: List[str] = []
+            for ci in item.get("citations", []):
+                label = ci.get("source_title") or ci.get("doc_id", "?")
+                parts.append(f"- **{_md_escape(label)}** — {ci.get('locator', '')}\n")
+                snip = ci.get("snippet", "")
+                if snip:
+                    parts.append(f"  > {_md_escape(snip)}\n")
+            if parts:
+                parts.append("\n")
+            return parts
+
+        for domain in payload.get("domains", []):
+            d_id = domain.get("domain_id", "")
+            out.append(f"## {d_id.replace('_', ' ').title()}\n\n")
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                out.append(f"### {fa_id.replace('_', ' ').title()}\n\n")
+                has_content = False
+                for cat in _ITEM_CATS_MD:
+                    items = fa.get(cat, [])
+                    if not items:
+                        continue
+                    has_content = True
+                    out.append(f"#### {_CAT_LABELS[cat]}\n\n")
+                    for item in items:
+                        strength = item.get("evidence_strength", "")
+                        out.append(
+                            f"**{item.get('item_id', '')}. {_md_escape(item.get('title', ''))}**"
+                            f" [{strength}]\n\n"
+                        )
+                        out.append(f"{_md_escape(item.get('statement', ''))}\n\n")
+                        out.extend(_render_item_cits(item))
+                costs = fa.get(_COST_CAT_MD, [])
+                if costs:
+                    has_content = True
+                    out.append(f"#### {_CAT_LABELS[_COST_CAT_MD]}\n\n")
+                    for item in costs:
+                        intensity = item.get("intensity", "")
+                        out.append(
+                            f"**{item.get('item_id', '')}. {_md_escape(item.get('title', ''))}**"
+                            f" [intensity: {intensity}]\n\n"
+                        )
+                        out.append(f"{_md_escape(item.get('statement', ''))}\n\n")
+                        out.extend(_render_item_cits(item))
+                if not has_content:
+                    out.append("_No evidence extracted for this focus area._\n\n")
+        return "".join(out).strip() + "\n"
+
     raise KeyError(f"render_markdown: unsupported job_id '{job_id}'")
 
 

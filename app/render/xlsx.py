@@ -226,7 +226,7 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
         _ITEM_CATS = (
             "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
             "operational_barriers", "governance_process_dependencies",
-            "evidence_gaps_uncertainty", "equity_implications",
+            "evidence_gaps_uncertainty", "equity_implications", "consequences_impacts",
         )
         _COST_CAT = "costs_resource_intensity"
 

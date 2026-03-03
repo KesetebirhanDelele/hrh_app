@@ -98,6 +98,22 @@ def _cost_item(item_id: str = "cri_001") -> dict:
     }
 
 
+def _con_item(item_id: str = "con_001") -> dict:
+    return {
+        "item_id": item_id,
+        "title": "Delayed Patient Access",
+        "statement": "Absenteeism led to delayed access to care for patients.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.5",
+            "snippet": "Absenteeism resulted in delayed access to care and increased workload for present staff.",
+        }],
+    }
+
+
 def _empty_focus_area(focus_area_id: str) -> dict:
     return {
         "focus_area_id": focus_area_id,
@@ -110,6 +126,7 @@ def _empty_focus_area(focus_area_id: str) -> dict:
         "evidence_gaps_uncertainty": [],
         "costs_resource_intensity": [],
         "equity_implications": [],
+        "consequences_impacts": [],
     }
 
 
@@ -135,6 +152,7 @@ VALID_PAYLOAD: dict = {
                     "evidence_gaps_uncertainty": [_gap_item()],
                     "costs_resource_intensity": [_cost_item()],
                     "equity_implications": [],
+                    "consequences_impacts": [],
                 }
             ],
         }
@@ -278,7 +296,7 @@ def test_invalid_focus_area_id_fails() -> None:
 # ---------------------------------------------------------------------------
 
 def test_missing_category_array_fails() -> None:
-    """All nine category arrays are required in a focus area."""
+    """All ten category arrays are required in a focus area."""
     bad = copy.deepcopy(VALID_PAYLOAD)
     del bad["domains"][0]["focus_areas"][0]["recommendations"]
     with pytest.raises(SchemaValidationError):
@@ -332,3 +350,168 @@ def test_barrier_item_without_barrier_language_fails() -> None:
     with pytest.raises(SchemaValidationError) as exc_info:
         validate_output(payload, SCHEMA)
     assert "operational_barriers" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# consequences_impacts — schema tests
+# ---------------------------------------------------------------------------
+
+def test_consequences_impacts_accepted() -> None:
+    """Schema accepts a valid consequences_impacts item."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [_con_item()]
+    validate_output(payload, SCHEMA)
+
+
+def test_missing_consequences_impacts_fails() -> None:
+    """Omitting consequences_impacts from a focus area fails schema validation."""
+    bad = copy.deepcopy(VALID_PAYLOAD)
+    del bad["domains"][0]["focus_areas"][0]["consequences_impacts"]
+    with pytest.raises(SchemaValidationError):
+        validate_output(bad, SCHEMA)
+
+
+# ---------------------------------------------------------------------------
+# consequences_impacts — validator tests
+# ---------------------------------------------------------------------------
+
+def test_consequences_impacts_item_with_impact_keywords_passes() -> None:
+    """Validator passes a consequences_impacts item whose snippet contains 'resulted in'."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [_con_item()]
+    validate_output(payload, SCHEMA)  # should not raise
+
+
+def test_consequences_impacts_item_without_impact_keywords_fails() -> None:
+    """Validator rejects a consequences_impacts item whose snippet has no impact keywords."""
+    bad = copy.deepcopy(VALID_PAYLOAD)
+    bad_item = {
+        "item_id": "con_001",
+        "title": "Some Impact",
+        "statement": "HRH failures affected the system.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "weak",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.1",
+            "snippet": "The PSS tool was administered to health workers in sub-Saharan Africa.",
+        }],
+    }
+    bad["domains"][0]["focus_areas"][0]["consequences_impacts"] = [bad_item]
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_output(bad, SCHEMA)
+    assert "consequences_impacts" in str(exc_info.value)
+
+
+def test_barrier_with_impact_keywords_hints_consequences() -> None:
+    """Barrier item with impact-language snippet (but no barrier language) hints to use consequences_impacts."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    impact_barrier = {
+        "item_id": "bar_001",
+        "title": "Delayed Patient Access",
+        "statement": "Absenteeism resulted in delayed access to care.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.5",
+            "snippet": "Absenteeism resulted in delayed access to care and increased workload for present staff.",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["operational_barriers"] = [impact_barrier]
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_output(payload, SCHEMA)
+    assert "consequences_impacts" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# consequences_impacts — merger test
+# ---------------------------------------------------------------------------
+
+def test_merge_consequences_impacts_deduplicates() -> None:
+    """Two partial outputs with the same-titled con_item → one merged item, combined citations."""
+    from app.analyze.merger import merge_outputs
+
+    cit1 = {
+        "doc_id": "SRC1",
+        "source_title": "Source One",
+        "locator": "p.1",
+        "snippet": "Absenteeism resulted in delayed access to care.",
+    }
+    cit2 = {
+        "doc_id": "SRC2",
+        "source_title": "Source Two",
+        "locator": "p.3",
+        "snippet": "Increased workload led to burnout among remaining staff.",
+    }
+    item_base = {
+        "item_id": "con_001",
+        "title": "Delayed Patient Access",
+        "statement": "Absenteeism caused delayed access.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [cit1],
+    }
+    item_dup = dict(item_base) | {"citations": [cit2]}
+
+    fa = {
+        "focus_area_id": "measurement_approaches",
+        **{cat: [] for cat in (
+            "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+            "operational_barriers", "governance_process_dependencies",
+            "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+        )},
+        "consequences_impacts": [item_base],
+    }
+    fa2 = dict(fa) | {"consequences_impacts": [item_dup]}
+
+    partial1 = {
+        "job_id": "domain_lessons_option_b",
+        "target_country": "Ethiopia",
+        "generated_at": "2026-01-01",
+        "domains": [{"domain_id": "absenteeism", "focus_areas": [fa]}],
+    }
+    partial2 = {
+        "job_id": "domain_lessons_option_b",
+        "target_country": "Ethiopia",
+        "generated_at": "2026-01-01",
+        "domains": [{"domain_id": "absenteeism", "focus_areas": [fa2]}],
+    }
+
+    merged = merge_outputs("domain_lessons_option_b", [partial1, partial2])
+    merged_fa = merged["domains"][0]["focus_areas"][0]
+    con_items = merged_fa["consequences_impacts"]
+    assert len(con_items) == 1, f"Expected 1 merged item, got {len(con_items)}"
+    assert len(con_items[0]["citations"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# XLSX renderer — consequences_impacts appears in items sheet
+# ---------------------------------------------------------------------------
+
+def test_xlsx_includes_consequences_impacts_row() -> None:
+    """XLSX items sheet contains a row with category='consequences_impacts'."""
+    openpyxl = pytest.importorskip("openpyxl")
+    load_workbook = openpyxl.load_workbook
+    import tempfile
+    from pathlib import Path
+    from app.render.xlsx import render_xlsx
+
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [_con_item()]
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        tmp_path = f.name
+
+    try:
+        render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
+        wb = load_workbook(tmp_path)
+        ws = wb["items"]
+        categories = [row[2] for row in ws.iter_rows(min_row=2, values_only=True) if row[2]]
+        assert "consequences_impacts" in categories, (
+            f"'consequences_impacts' not found in items sheet. Found: {set(categories)}"
+        )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)

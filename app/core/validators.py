@@ -129,6 +129,7 @@ _LESSON_ALL_CATEGORIES = (
     "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
     "operational_barriers", "governance_process_dependencies",
     "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+    "consequences_impacts",
 )
 
 
@@ -166,6 +167,12 @@ _OB_BARRIER_KEYWORDS = (
     "hurdle", "challenge", "shortage",
 )
 
+# Keywords that signal downstream impact/consequence framing.
+_CI_IMPACT_KEYWORDS = (
+    "consequence", "resulted in", "led to", "increased", "delayed",
+    "burden", "cost", "workload", "quality", "access", "reduced",
+)
+
 
 def _validate_domain_lessons_barrier_snippets(payload: Dict[str, Any], schema_file: Path) -> None:
     """operational_barriers items must have at least one citation snippet with barrier framing.
@@ -186,18 +193,68 @@ def _validate_domain_lessons_barrier_snippets(payload: Dict[str, Any], schema_fi
                     for kw in _OB_BARRIER_KEYWORDS
                 )
                 if not has_keyword:
+                    has_impact = any(
+                        kw in snip.lower()
+                        for snip in snippets
+                        for kw in _CI_IMPACT_KEYWORDS
+                    )
+                    if has_impact:
+                        suggestion = (
+                            "if this describes a downstream outcome/impact, use consequences_impacts instead; "
+                            "if it describes a cause or determinant, use lessons_learnt "
+                            "(evidence_type=determinant_mechanism) instead"
+                        )
+                    else:
+                        suggestion = (
+                            "if this describes a cause or determinant, use lessons_learnt "
+                            "(evidence_type=determinant_mechanism) instead"
+                        )
                     raise SchemaValidationError(
                         schema_path=str(schema_file),
                         message=(
                             f"operational_barriers item '{item_id}' in domain='{d_id}', "
                             f"focus_area='{fa_id}' has no citation snippet with barrier framing — "
-                            f"if this describes a cause or determinant, use lessons_learnt "
-                            f"(evidence_type=determinant_mechanism) instead"
+                            f"{suggestion}"
                         ),
                         errors=[
                             f"None of the {len(snippets)} snippet(s) contain a barrier keyword "
                             f"({', '.join(repr(k) for k in _OB_BARRIER_KEYWORDS)}). "
                             f"Snippet(s): " + "; ".join(f'"{s[:100]}"' for s in snippets)
+                        ],
+                    )
+
+
+def _validate_domain_lessons_impact_snippets(payload: Dict[str, Any], schema_file: Path) -> None:
+    """consequences_impacts items must have at least one citation snippet with impact framing.
+
+    Items whose snippets only describe barriers or causes should be in operational_barriers
+    or lessons_learnt instead.
+    """
+    for domain in payload.get("domains", []):
+        d_id = domain.get("domain_id", "?")
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id", "?")
+            for item in fa.get("consequences_impacts", []):
+                item_id = item.get("item_id", "?")
+                snippets = [cit.get("snippet", "") for cit in item.get("citations", [])]
+                has_keyword = any(
+                    kw in snip.lower()
+                    for snip in snippets
+                    for kw in _CI_IMPACT_KEYWORDS
+                )
+                if not has_keyword:
+                    raise SchemaValidationError(
+                        schema_path=str(schema_file),
+                        message=(
+                            f"consequences_impacts item '{item_id}' in domain='{d_id}', "
+                            f"focus_area='{fa_id}' has no citation snippet with impact framing — "
+                            f"if this describes a barrier, use operational_barriers instead; "
+                            f"if it describes a cause, use lessons_learnt (evidence_type=determinant_mechanism)"
+                        ),
+                        errors=[
+                            f"None of the {len(snippets)} snippet(s) contain an impact keyword "
+                            f"({', '.join(repr(k) for k in _CI_IMPACT_KEYWORDS)}). "
+                            "Snippet(s): " + "; ".join(f'"{s[:100]}"' for s in snippets)
                         ],
                     )
 
@@ -245,6 +302,7 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
     if payload.get("job_id") == "domain_lessons_option_b":
         _validate_domain_lessons_item_id_uniqueness(payload, schema_file)
         _validate_domain_lessons_barrier_snippets(payload, schema_file)
+        _validate_domain_lessons_impact_snippets(payload, schema_file)
 
     # Optional strict gate: citations must have real identifiers
     if _strict_citations_enabled():

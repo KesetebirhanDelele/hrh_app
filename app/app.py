@@ -792,6 +792,7 @@ _DOMAIN_LESSONS_CATEGORIES = (
     "evidence_gaps_uncertainty",
     "costs_resource_intensity",
     "equity_implications",
+    "consequences_impacts",
 )
 
 

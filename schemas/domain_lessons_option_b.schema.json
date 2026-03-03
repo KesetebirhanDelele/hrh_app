@@ -92,7 +92,8 @@
         "governance_process_dependencies",
         "evidence_gaps_uncertainty",
         "costs_resource_intensity",
-        "equity_implications"
+        "equity_implications",
+        "consequences_impacts"
       ],
       "properties": {
         "focus_area_id": {
@@ -121,7 +122,8 @@
         "governance_process_dependencies": { "type": "array", "items": { "$ref": "#/$defs/Item" } },
         "evidence_gaps_uncertainty":       { "type": "array", "items": { "$ref": "#/$defs/Item" } },
         "costs_resource_intensity":        { "type": "array", "items": { "$ref": "#/$defs/CostItem" } },
-        "equity_implications":             { "type": "array", "items": { "$ref": "#/$defs/Item" } }
+        "equity_implications":             { "type": "array", "items": { "$ref": "#/$defs/Item" } },
+        "consequences_impacts":            { "type": "array", "items": { "$ref": "#/$defs/Item" } }
       }
     },
     "Domain": {
