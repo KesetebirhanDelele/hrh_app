@@ -12,7 +12,8 @@
     "governance_process_dependencies",
     "evidence_gaps_uncertainty",
     "costs_resource_intensity",
-    "equity_implications"
+    "equity_implications",
+    "consequences_impacts"
   ],
   "priority_levels": ["high", "medium", "low"]
 }

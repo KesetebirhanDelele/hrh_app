@@ -30,7 +30,8 @@
             "enum": [
               "proven_interventions", "lessons_learnt", "recommendations",
               "prerequisites", "operational_barriers", "governance_process_dependencies",
-              "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications"
+              "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+              "consequences_impacts"
             ]
           }
         },

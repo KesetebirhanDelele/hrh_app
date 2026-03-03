@@ -385,6 +385,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 _build_planner_prompt(src, str(planner_job.prompt_template)),
                 generate_json, LLMNotConfigured, _json,
                 planner_schema_rel, job_id="domain_lessons_planner",
+                label=f"planner source_id={src_id!r} title={src.get('source_title','')[:60]!r}",
             )
             if planner_payload is None:
                 print(f"  Warning: planner returned no output for {src_id!r}", file=sys.stderr)
@@ -405,8 +406,17 @@ def cmd_run(args: argparse.Namespace) -> int:
             print("No plans produced by planner.", file=sys.stderr)
             return 3
 
+        # ── Stage 1.5: Deterministic keyword coverage enforcement ──────────────
+        # Scans full snippet text for each source and adds any uncovered locators
+        # that contain keyword-family hits to the planner plans. This removes
+        # dependence on the planner LLM faithfully following keyword scan rules.
+        all_plans = _enforce_planner_keyword_coverage(all_plans, sources_by_id)
+
         # ── Stage 2: Targeted extraction ──────────────────────────────────────
-        _max_excerpts = int(os.getenv("HRH_MAX_EXCERPTS_PER_CALL", "5"))
+        # Default is 10 (higher than the non-planned llm mode) because
+        # _planner_to_batches now groups all selected locators per source;
+        # more excerpts per call means the extractor sees fuller context.
+        _max_excerpts = int(os.getenv("HRH_MAX_EXCERPTS_PER_CALL", "10"))
         _max_chars = int(os.getenv("HRH_MAX_CHARS_PER_CALL", "16000"))
         extraction_batches = _planner_to_batches(all_plans, sources_by_id, _max_excerpts, _max_chars)
         if not extraction_batches:
@@ -418,7 +428,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         for batch_idx, batch in enumerate(extraction_batches, 1):
             src_name = (batch[0].get("source_title", "unknown")[:50] if batch else "unknown")
-            print(f"  Batch {batch_idx}/{len(extraction_batches)}: {src_name}")
+            batch_locators = [
+                snip.get("locator", "")
+                for src in batch
+                for snip in src.get("snippets", [])
+            ]
+            print(f"  Batch {batch_idx}/{len(extraction_batches)}: {src_name} ({len(batch_locators)} locators: {batch_locators})")
 
             tmp_file = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", delete=False, encoding="utf-8"
@@ -446,11 +461,35 @@ def cmd_run(args: argparse.Namespace) -> int:
             payload = _llm_call_with_retry(
                 rendered_prompt, generate_json, LLMNotConfigured, _json,
                 schema_rel, job_id=args.job,
+                label=f"extractor batch {batch_idx}: {src_name} locators={batch_locators}",
             )
             if payload is None:
                 print(f"  Warning: no valid output for batch {batch_idx}", file=sys.stderr)
             else:
                 partial_outputs.append(payload)
+
+                # Coverage expansion pass: if few locators are cited from a large batch,
+                # run a second sweep targeting under-captured categories.
+                _batch_doc_ids = {
+                    src.get("source_id", src.get("doc_id", "")) for src in batch
+                }
+                _n_cited = _count_cited_locators_in_payload(payload, _batch_doc_ids)
+                if _n_cited < 5 and len(batch_locators) >= 8:
+                    print(
+                        f"  [EXPANSION] batch {batch_idx}: {_n_cited} locators cited / "
+                        f"{len(batch_locators)} available — running expansion sweep..."
+                    )
+                    if call_delay > 0:
+                        print(f"  Waiting {call_delay}s before expansion call...")
+                        time.sleep(call_delay)
+                    exp_payload = _llm_call_with_retry(
+                        rendered_prompt + _EXPANSION_SUFFIX,
+                        generate_json, LLMNotConfigured, _json,
+                        schema_rel, job_id=args.job,
+                        label=f"expansion batch {batch_idx}",
+                    )
+                    if exp_payload is not None:
+                        partial_outputs.append(exp_payload)
 
             if len(extraction_batches) > 1 and batch_idx < len(extraction_batches) and call_delay > 0:
                 print(f"  Waiting {call_delay}s for rate limit window...")
@@ -687,11 +726,158 @@ def _expand_source_batches_for_job(
 _INTERNAL_JOBS: frozenset[str] = frozenset({"domain_lessons_planner"})
 
 
+# ---------------------------------------------------------------------------
+# Planner keyword families — used for deterministic coverage enforcement.
+# Each family maps to the schema category that best represents its evidence type.
+# Scanned against FULL snippet text (not truncated preview) after planner returns.
+# ---------------------------------------------------------------------------
+_PLANNER_KEYWORD_FAMILIES: dict[str, tuple[str, ...]] = {
+    "prerequisites": (
+        "quick", "freely available", "languages", "available in",
+        "simple", "easy to administer",
+    ),
+    "operational_barriers": (
+        "lengthy", "time-intensive", "substantial", "resources",
+        "constraint", "hurdle", "challenge",
+    ),
+    "evidence_gaps_uncertainty": (
+        "limitations", "future research", "uncertainty", "heterogeneity",
+        "inconsistent", "comparability",
+    ),
+    "equity_implications": (
+        "female", "male", "gender", "women", "men", "rural", "urban", "cadre",
+    ),
+    "governance_process_dependencies": (
+        "responsible", "accountable", "report", "monitor", "cadence",
+        "monthly", "weekly", "supervisor", "policy", "enforcement",
+    ),
+    "consequences_impacts": (
+        "workload", "delayed", "cost", "access", "burden",
+        "quality", "stress", "overwhelm",
+    ),
+}
+
+_PLANNER_ENFORCEMENT_MAX_SEGMENTS = 10
+
+
+def _enforce_planner_keyword_coverage(
+    plans: list[dict],
+    sources_by_id: dict,
+) -> list[dict]:
+    """Deterministically add locators with keyword-family hits that the planner missed.
+
+    Scans the FULL snippet text (not truncated previews) against each keyword family.
+    Any locator that matches a family keyword but is not already covered by any segment
+    is appended to the highest-priority segment whose likely_categories includes the
+    relevant category, or added to a new segment if none exists (up to the cap).
+
+    Only valid locators (present in the source snippets) are added. Never invents
+    locator strings. Applied only to plans already produced by the planner LLM.
+    """
+    _PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+    for plan in plans:
+        sid = plan.get("source_id", "")
+        src = sources_by_id.get(sid)
+        if src is None:
+            continue
+
+        segments = plan.get("segments", [])
+
+        # Collect all locators already covered by ANY segment
+        covered: set[str] = {
+            loc
+            for seg in segments
+            for loc in seg.get("locators", [])
+        }
+
+        # Build locator → full text map for this source
+        locator_text: dict[str, str] = {
+            snip.get("locator", ""): snip.get("text", "")
+            for snip in src.get("snippets", [])
+            if snip.get("locator")
+        }
+
+        for family, keywords in _PLANNER_KEYWORD_FAMILIES.items():
+            # Find uncovered locators whose full text matches any family keyword
+            missing: list[str] = [
+                loc
+                for loc, text in locator_text.items()
+                if loc not in covered
+                and any(kw in text.lower() for kw in keywords)
+            ]
+            if not missing:
+                continue
+
+            print(
+                f"  [COVERAGE ENFORCE] source={sid!r} family={family!r} "
+                f"adding {len(missing)} locator(s): {missing}"
+            )
+
+            # Prefer the highest-priority existing segment that targets this category
+            target_seg = next(
+                (
+                    seg
+                    for seg in sorted(
+                        segments,
+                        key=lambda s: _PRIORITY_ORDER.get(s.get("priority", "low"), 2),
+                    )
+                    if family in seg.get("likely_categories", [])
+                ),
+                None,
+            )
+
+            if target_seg is not None:
+                for loc in missing:
+                    if loc not in covered:
+                        target_seg.setdefault("locators", []).append(loc)
+                        covered.add(loc)
+            elif len(segments) < _PLANNER_ENFORCEMENT_MAX_SEGMENTS:
+                new_seg = {
+                    "segment_id": f"seg_{len(segments) + 1:03d}",
+                    "locators": [loc for loc in missing if loc not in covered],
+                    "likely_categories": [family],
+                    "priority": "medium",
+                    "reason": f"Deterministic keyword coverage enforcement ({family!r})",
+                }
+                for loc in new_seg["locators"]:
+                    covered.add(loc)
+                segments.append(new_seg)
+            else:
+                # Segment cap reached: merge into the last segment
+                last_seg = segments[-1]
+                for loc in missing:
+                    if loc not in covered:
+                        last_seg.setdefault("locators", []).append(loc)
+                        covered.add(loc)
+                if family not in last_seg.get("likely_categories", []):
+                    last_seg.setdefault("likely_categories", []).append(family)
+
+        plan["segments"] = segments
+
+    return plans
+
+
+def _truncate_at_word_boundary(text: str, max_chars: int = 300) -> str:
+    """Truncate *text* to at most *max_chars*, breaking at the last whitespace.
+
+    Avoids cutting mid-word so that keyword scanners (planner coverage rules,
+    snippet validators) do not miss words that straddle the cut point.
+    If no whitespace is found before *max_chars*, falls back to a hard cut.
+    """
+    if len(text) <= max_chars:
+        return text
+    cut = text.rfind(" ", 0, max_chars)
+    return text[:cut] if cut > 0 else text[:max_chars]
+
+
 def _build_planner_prompt(source: dict, template_path: str) -> str:
     """Build the planner prompt for a single source.
 
     Reads the template, builds a locator index (locator + preview + type),
     and appends the RENDERED INPUTS block matching the pattern of render_prompt_for_job.
+    Previews are truncated at a word boundary so keyword families in the planner
+    coverage scan are not split mid-word.
     """
     import json as _json
     template = Path(template_path).read_text(encoding="utf-8")
@@ -699,7 +885,7 @@ def _build_planner_prompt(source: dict, template_path: str) -> str:
         {
             "locator": snip.get("locator", ""),
             "type": snip.get("type", "text"),
-            "preview": snip.get("text", "")[:300],
+            "preview": _truncate_at_word_boundary(snip.get("text", ""), 500),
         }
         for snip in source.get("snippets", [])
         if snip.get("locator")
@@ -744,14 +930,15 @@ def _check_planner_locators(planner_output: dict, sources_by_id: dict) -> list[s
 def _planner_to_batches(
     plans: list[dict],
     sources_by_id: dict,
-    max_excerpts: int = 5,
+    max_excerpts: int = 10,
     max_chars: int = 16_000,
 ) -> list:
     """Convert planner segment plans into extraction source_batches.
 
-    For each segment (sorted high->medium->low), collect matching snippets, apply
-    _snippet_sub_batches to enforce per-call limits.  Each sub-batch becomes one
-    element of the returned list — a single-source list compatible with the extractor.
+    Collects ALL planner-selected locators for each source (across all segments,
+    sorted high→medium→low priority), then applies _snippet_sub_batches to enforce
+    per-call limits.  Grouping by source (rather than per-segment) gives the extractor
+    fuller context per call, which improves category coverage and item classification.
     """
     _PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
     batches: list = []
@@ -769,16 +956,19 @@ def _planner_to_batches(
             plan.get("segments", []),
             key=lambda s: _PRIORITY_ORDER.get(s.get("priority", "low"), 2),
         )
+        # Collect all selected locators across all segments, deduplicating while
+        # preserving priority order so high-priority evidence appears first in each batch.
+        seen_locs: set[str] = set()
+        all_snips: list[dict] = []
         for seg in segments:
-            seg_snips = [
-                locator_to_snip[loc]
-                for loc in seg.get("locators", [])
-                if loc in locator_to_snip
-            ]
-            if not seg_snips:
-                continue
-            for sub_snips in _snippet_sub_batches(seg_snips, max_excerpts, max_chars):
-                batches.append([{**src, "snippets": sub_snips}])
+            for loc in seg.get("locators", []):
+                if loc in locator_to_snip and loc not in seen_locs:
+                    seen_locs.add(loc)
+                    all_snips.append(locator_to_snip[loc])
+        if not all_snips:
+            continue
+        for sub_snips in _snippet_sub_batches(all_snips, max_excerpts, max_chars):
+            batches.append([{**src, "snippets": sub_snips}])
     return batches
 
 
@@ -794,6 +984,50 @@ _DOMAIN_LESSONS_CATEGORIES = (
     "equity_implications",
     "consequences_impacts",
 )
+
+# Expansion pass suffix — appended to the rendered prompt when fewer than 5 locators
+# are cited from a batch of ≥8.  The second call typically recovers under-captured
+# categories (prerequisites, evidence_gaps, equity, consequences) without requiring a
+# separate prompt template.
+_EXPANSION_SUFFIX = """\n
+## EXPANSION PASS — Second extraction sweep
+
+Your previous extraction may have under-populated some categories.
+Re-scan ALL provided excerpts and output a COMPLETE JSON payload that includes
+BOTH your previous items AND any additional items you now find.
+
+Focus especially on these frequently missed categories:
+- prerequisites          (enabling conditions: availability, language support, training requirements)
+- operational_barriers   (resource constraints, "lengthy", "time-intensive", infrastructure gaps)
+- evidence_gaps_uncertainty (limitations, measurement heterogeneity, future research calls)
+- costs_resource_intensity  (programme costs, patient out-of-pocket costs, resource demands)
+- governance_process_dependencies (actor + action + cadence when all three present)
+- equity_implications    (named group + distributional difference in same snippet)
+- consequences_impacts   (downstream effects: delayed access, increased workload, reduced quality)
+
+Apply the Category Fill Checklist and List/Table Expansion rules from the prompt above.
+Return a COMPLETE valid JSON payload — not just the new items.
+"""
+
+
+def _count_cited_locators_in_payload(payload: dict, doc_ids: set) -> int:
+    """Count unique (doc_id, locator) pairs cited in payload that belong to doc_ids.
+
+    Used to decide whether a coverage expansion call is needed: if very few
+    distinct locators are cited despite a large batch being available, a second
+    sweep is likely to recover under-captured categories.
+    """
+    cited: set[tuple[str, str]] = set()
+    for domain in payload.get("domains", []):
+        for fa in domain.get("focus_areas", []):
+            for cat in _DOMAIN_LESSONS_CATEGORIES:
+                for item in fa.get(cat, []):
+                    for cit in item.get("citations", []):
+                        doc_id = cit.get("doc_id", "")
+                        locator = cit.get("locator", "")
+                        if doc_id in doc_ids and locator:
+                            cited.add((doc_id, locator))
+    return len(cited)
 
 
 def _log_coverage_warnings(job_id: str, payload: dict, all_sources: list[dict]) -> None:
@@ -859,11 +1093,17 @@ def _stamp_run_date(job_id: str, payload: dict) -> None:
         payload["generated_at"] = date.today().isoformat()
 
 
-def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json, schema_rel=None, job_id=None):
+def _llm_call_with_retry(
+    rendered_prompt, generate_json, LLMNotConfigured, _json,
+    schema_rel=None, job_id=None, label=None,
+):
     """Call the LLM with up to 3 repair attempts. Returns parsed payload or None.
 
     When schema_rel is None, schema validation is skipped (useful for per-item
     RAG calls where each item is a partial output that won't match the full schema).
+
+    *label* is an optional string (e.g. "planner SRC1", "extractor batch 2") printed
+    alongside the final failure warning so the caller site is identifiable in logs.
     """
     from app.core.validators import validate_output
 
@@ -883,7 +1123,8 @@ def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json
         except Exception as e:
             repair_notes = f"Your output was not valid JSON. Error: {e}"
             if attempt == max_attempts:
-                print(repair_notes, file=sys.stderr)
+                label_str = f" [{label}]" if label else ""
+                print(f"  Warning: JSON parse failed after {max_attempts} attempts{label_str}: {repair_notes}", file=sys.stderr)
                 break
             continue
 
@@ -896,7 +1137,9 @@ def _llm_call_with_retry(rendered_prompt, generate_json, LLMNotConfigured, _json
         except Exception as e:
             repair_notes = str(e)
             if attempt == max_attempts:
-                print(f"  Warning: output invalid after {max_attempts} attempts", file=sys.stderr)
+                label_str = f" [{label}]" if label else ""
+                print(f"  Warning: output invalid after {max_attempts} attempts{label_str}", file=sys.stderr)
+                print(f"  Last validation error: {repair_notes}", file=sys.stderr)
             continue
 
     return payload  # may be invalid but best effort

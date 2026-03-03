@@ -515,3 +515,143 @@ def test_xlsx_includes_consequences_impacts_row() -> None:
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# consequences_impacts — expanded keywords (D)
+# ---------------------------------------------------------------------------
+
+def test_consequences_impacts_passes_for_workload_snippet() -> None:
+    """'workload' is a primary impact keyword — item passes without fallback."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_001",
+        "title": "Increased Workload",
+        "statement": "Absenteeism increases workload for remaining staff.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC2",
+            "source_title": "Absenteeism in SSA",
+            "locator": "p.12",
+            "snippet": "high workload for remaining healthcare workers (n=4, 29%).",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_consequences_impacts_passes_for_stress_snippet() -> None:
+    """'stress' is a newly added impact keyword — item passes."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_002",
+        "title": "Staff Stress Due to Understaffing",
+        "statement": "Chronic understaffing caused significant staff stress.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC2",
+            "source_title": "Absenteeism in SSA",
+            "locator": "p.13",
+            "snippet": "Nurses reported overwhelming stress and strain from working understaffed shifts.",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_consequences_impacts_fallback_passes_when_statement_has_impact_and_snippet_has_broad_term() -> None:
+    """Fallback: statement has 'led to' + snippet has 'patient' → validator accepts."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_003",
+        "title": "Patient Harm from Absenteeism",
+        "statement": "Absenteeism led to harm for patients who could not access care.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC2",
+            "source_title": "Absenteeism in SSA",
+            "locator": "p.12",
+            # Snippet cut before the word "led" appears — broad term "patient" present
+            "snippet": "Consequences for patient well-being were documented across nine studies.",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_consequences_impacts_fallback_fails_when_both_checks_miss() -> None:
+    """Fallback does not rescue a truly neutral snippet with no broad terms either."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_004",
+        "title": "Unclear Impact",
+        "statement": "The PSS tool was validated in seven countries.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "weak",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.1",
+            "snippet": "The PSS was administered to enumerators in local and English languages.",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_output(payload, SCHEMA)
+    assert "consequences_impacts" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# operational_barriers — statement fallback (Fix C)
+# ---------------------------------------------------------------------------
+
+def test_barrier_no_keyword_snippet_with_barrier_statement_passes() -> None:
+    """operational_barriers item whose snippet contains no barrier keywords passes when
+    its statement contains barrier-proxy language ('time-intensive', 'requires', etc.).
+
+    This covers the real case where the LLM quotes a sentence fragment that doesn't
+    include a recognised barrier keyword, but the statement clearly describes a constraint.
+    """
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    bar_item = {
+        "item_id": "bar_001",
+        "title": "Existing Tools Are Resource Intensive",
+        "statement": "Existing supervision tools are lengthy and time-intensive, requiring substantial resources.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p. 2 (part 1)",
+            # Snippet contains the source text but has no barrier keyword (no "lack of", "inadequate", etc.)
+            "snippet": "these tools are lengthy, time-intensive, and require substantial programmatic input",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["operational_barriers"] = [bar_item]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_barrier_no_keyword_snippet_neutral_statement_fails() -> None:
+    """operational_barriers item with no barrier keywords in snippet OR statement fails."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    bar_item = {
+        "item_id": "bar_001",
+        "title": "Supervision Gap",
+        "statement": "Supervision was insufficient in rural areas.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.3",
+            # Neutral snippet — causes, not barriers or constraints
+            "snippet": "causes included insufficient supervision (56%) and low pay (44%).",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["operational_barriers"] = [bar_item]
+    with pytest.raises(SchemaValidationError) as exc_info:
+        validate_output(payload, SCHEMA)
+    assert "operational_barriers" in str(exc_info.value)

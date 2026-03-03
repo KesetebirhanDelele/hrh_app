@@ -167,10 +167,27 @@ _OB_BARRIER_KEYWORDS = (
     "hurdle", "challenge", "shortage",
 )
 
+# Fallback keywords checked against the item's *statement* when the snippet is empty or
+# lacks primary barrier keywords. These capture operational cost/complexity language that
+# the LLM may express in the statement even when the source snippet is brief or empty.
+_OB_BARRIER_STMT_KEYWORDS = (
+    "lengthy", "time-intensive", "resources", "requires", "resource-intensive",
+    "constraint", "challenge", "hurdle", "difficult", "burdensome",
+)
+
 # Keywords that signal downstream impact/consequence framing.
 _CI_IMPACT_KEYWORDS = (
     "consequence", "resulted in", "led to", "increased", "delayed",
     "burden", "cost", "workload", "quality", "access", "reduced",
+    "overwhelm", "overwhelmed", "stress", "strain",
+)
+
+# Broad terms used in the fallback check: if a snippet contains one of these AND
+# the item's statement contains a primary impact keyword, the item is accepted.
+# This handles cases where the snippet is truncated before the impact keyword appears.
+_CI_IMPACT_BROAD = (
+    "workload", "access", "cost", "delay", "burden",
+    "quality", "care", "patient", "community", "staff",
 )
 
 
@@ -193,6 +210,14 @@ def _validate_domain_lessons_barrier_snippets(payload: Dict[str, Any], schema_fi
                     for kw in _OB_BARRIER_KEYWORDS
                 )
                 if not has_keyword:
+                    # Fallback: accept if the item's statement itself uses barrier/cost language.
+                    # This handles cases where the LLM cannot reproduce the exact source phrase
+                    # (e.g. snippet is empty or truncated) but the statement clearly frames the
+                    # item as an operational constraint rather than a cause or consequence.
+                    statement = item.get("statement", "").lower()
+                    if any(kw in statement for kw in _OB_BARRIER_STMT_KEYWORDS):
+                        continue
+
                     has_impact = any(
                         kw in snip.lower()
                         for snip in snippets
@@ -225,10 +250,14 @@ def _validate_domain_lessons_barrier_snippets(payload: Dict[str, Any], schema_fi
 
 
 def _validate_domain_lessons_impact_snippets(payload: Dict[str, Any], schema_file: Path) -> None:
-    """consequences_impacts items must have at least one citation snippet with impact framing.
+    """consequences_impacts items must have impact framing in their snippet or statement.
 
-    Items whose snippets only describe barriers or causes should be in operational_barriers
-    or lessons_learnt instead.
+    Primary check: at least one citation snippet contains an impact keyword.
+    Fallback: the item statement contains an impact keyword AND at least one snippet
+    contains a broad impact-related term (handles snippets truncated before the keyword).
+
+    Items whose snippets and statement only describe barriers or causes should be in
+    operational_barriers or lessons_learnt instead.
     """
     for domain in payload.get("domains", []):
         d_id = domain.get("domain_id", "?")
@@ -237,26 +266,43 @@ def _validate_domain_lessons_impact_snippets(payload: Dict[str, Any], schema_fil
             for item in fa.get("consequences_impacts", []):
                 item_id = item.get("item_id", "?")
                 snippets = [cit.get("snippet", "") for cit in item.get("citations", [])]
+
+                # Primary check: impact keyword in any snippet
                 has_keyword = any(
                     kw in snip.lower()
                     for snip in snippets
                     for kw in _CI_IMPACT_KEYWORDS
                 )
-                if not has_keyword:
-                    raise SchemaValidationError(
-                        schema_path=str(schema_file),
-                        message=(
-                            f"consequences_impacts item '{item_id}' in domain='{d_id}', "
-                            f"focus_area='{fa_id}' has no citation snippet with impact framing — "
-                            f"if this describes a barrier, use operational_barriers instead; "
-                            f"if it describes a cause, use lessons_learnt (evidence_type=determinant_mechanism)"
-                        ),
-                        errors=[
-                            f"None of the {len(snippets)} snippet(s) contain an impact keyword "
-                            f"({', '.join(repr(k) for k in _CI_IMPACT_KEYWORDS)}). "
-                            "Snippet(s): " + "; ".join(f'"{s[:100]}"' for s in snippets)
-                        ],
-                    )
+                if has_keyword:
+                    continue
+
+                # Fallback: statement has impact keyword + snippet has broad impact term
+                statement = item.get("statement", "").lower()
+                has_stmt_keyword = any(kw in statement for kw in _CI_IMPACT_KEYWORDS)
+                has_broad_snip = any(
+                    term in snip.lower()
+                    for snip in snippets
+                    for term in _CI_IMPACT_BROAD
+                )
+                if has_stmt_keyword and has_broad_snip:
+                    continue
+
+                raise SchemaValidationError(
+                    schema_path=str(schema_file),
+                    message=(
+                        f"consequences_impacts item '{item_id}' in domain='{d_id}', "
+                        f"focus_area='{fa_id}' has no citation snippet with impact framing — "
+                        f"if this describes a barrier, use operational_barriers instead; "
+                        f"if it describes a cause, use lessons_learnt (evidence_type=determinant_mechanism)"
+                    ),
+                    errors=[
+                        f"None of the {len(snippets)} snippet(s) contain an impact keyword "
+                        f"({', '.join(repr(k) for k in _CI_IMPACT_KEYWORDS)}); "
+                        f"fallback also failed (statement impact keyword={has_stmt_keyword}, "
+                        f"snippet broad term={has_broad_snip}). "
+                        "Snippet(s): " + "; ".join(f'"{s[:100]}"' for s in snippets)
+                    ],
+                )
 
 
 def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optional[str] = None) -> None:

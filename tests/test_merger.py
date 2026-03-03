@@ -263,7 +263,7 @@ class TestMergeDomainSolutions:
 # ---------------------------------------------------------------------------
 
 def _empty_fa(fa_id: str) -> dict:
-    """Build a fully-populated focus area with all nine empty category arrays."""
+    """Build a fully-populated focus area with all ten empty category arrays."""
     return {
         "focus_area_id": fa_id,
         "proven_interventions": [],
@@ -275,12 +275,16 @@ def _empty_fa(fa_id: str) -> dict:
         "evidence_gaps_uncertainty": [],
         "costs_resource_intensity": [],
         "equity_implications": [],
+        "consequences_impacts": [],
     }
 
 
 def _dl_partial(
     pi_items: list | None = None,
     cost_items: list | None = None,
+    ll_items: list | None = None,
+    bar_items: list | None = None,
+    con_items: list | None = None,
 ) -> dict:
     """Minimal domain_lessons_option_b partial with one focus area."""
     fa = _empty_fa("supervision_models")
@@ -288,6 +292,12 @@ def _dl_partial(
         fa["proven_interventions"] = pi_items
     if cost_items:
         fa["costs_resource_intensity"] = cost_items
+    if ll_items:
+        fa["lessons_learnt"] = ll_items
+    if bar_items:
+        fa["operational_barriers"] = bar_items
+    if con_items:
+        fa["consequences_impacts"] = con_items
     return {
         "job_id": "domain_lessons_option_b",
         "target_country": "Global",
@@ -377,11 +387,12 @@ class TestMergeDomainLessons:
         assert "pi_002" in ids
 
     def test_unique_item_ids_per_focus_area(self) -> None:
-        """After merge, all item_ids within a focus area are unique across all 9 categories."""
+        """After merge, all item_ids within a focus area are unique across all 10 categories."""
         _ALL_CATS = (
             "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
             "operational_barriers", "governance_process_dependencies",
             "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+            "consequences_impacts",
         )
         p1 = _dl_partial(
             pi_items=[_item("Checklists", "weak", "SRC1", "p.1")],
@@ -399,3 +410,112 @@ class TestMergeDomainLessons:
             for item in fa.get(cat, [])
         ]
         assert len(all_ids) == len(set(all_ids)), f"Duplicate item_ids in focus area: {all_ids}"
+
+
+# ---------------------------------------------------------------------------
+# Cross-category deduplication — items with same title in different categories
+# must NOT be merged. (Task C verification)
+# ---------------------------------------------------------------------------
+
+def _ll_item(title: str, doc_id: str, locator: str) -> dict:
+    """Build a lessons_learnt item."""
+    return {
+        "item_id": "x",
+        "title": title,
+        "statement": f"Determinant: {title}.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{"doc_id": doc_id, "source_title": "T", "locator": locator, "snippet": "S."}],
+    }
+
+
+def _bar_item(title: str, doc_id: str, locator: str) -> dict:
+    """Build an operational_barriers item."""
+    return {
+        "item_id": "x",
+        "title": title,
+        "statement": f"Barrier: {title}.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "weak",
+        "citations": [{"doc_id": doc_id, "source_title": "T", "locator": locator, "snippet": "S."}],
+    }
+
+
+def _con_item(title: str, doc_id: str, locator: str) -> dict:
+    """Build a consequences_impacts item."""
+    return {
+        "item_id": "x",
+        "title": title,
+        "statement": f"Consequence: {title}.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{"doc_id": doc_id, "source_title": "T", "locator": locator, "snippet": "S."}],
+    }
+
+
+class TestCrossCategoryMerge:
+    """Verify that items with the same title in DIFFERENT categories are not merged."""
+
+    def test_same_title_different_categories_both_kept(self) -> None:
+        """An item titled 'High Workload' in lessons_learnt AND operational_barriers must
+        produce two separate items after merge — not be collapsed into one."""
+        shared_title = "High Workload"
+        p1 = _dl_partial(
+            ll_items=[_ll_item(shared_title, "SRC1", "p.1")],
+        )
+        p2 = _dl_partial(
+            bar_items=[_bar_item(shared_title, "SRC1", "p.2")],
+        )
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        fa = result["domains"][0]["focus_areas"][0]
+        ll_titles = {i["title"] for i in fa.get("lessons_learnt", [])}
+        bar_titles = {i["title"] for i in fa.get("operational_barriers", [])}
+        assert shared_title in ll_titles, "lessons_learnt item must be present"
+        assert shared_title in bar_titles, "operational_barriers item must be present"
+        assert len(fa["lessons_learnt"]) == 1
+        assert len(fa["operational_barriers"]) == 1
+
+    def test_same_title_same_category_merged(self) -> None:
+        """Items with the same title in the SAME category across two partials ARE merged."""
+        shared_title = "Supervision Gap"
+        p1 = _dl_partial(bar_items=[_bar_item(shared_title, "SRC1", "p.3")])
+        p2 = _dl_partial(bar_items=[_bar_item(shared_title, "SRC2", "p.7")])
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        fa = result["domains"][0]["focus_areas"][0]
+        assert len(fa["operational_barriers"]) == 1, "duplicate title in same category must deduplicate"
+        assert len(fa["operational_barriers"][0]["citations"]) == 2
+
+    def test_consequences_and_operational_barriers_not_conflated(self) -> None:
+        """An excerpt that is correctly placed in consequences_impacts is kept separate
+        from an operational_barriers item with a coincidentally identical title."""
+        title = "Delayed Access"
+        p1 = _dl_partial(con_items=[_con_item(title, "SRC1", "p.5")])
+        p2 = _dl_partial(bar_items=[_bar_item(title, "SRC1", "p.5")])
+        result = merge_outputs("domain_lessons_option_b", [p1, p2])
+        fa = result["domains"][0]["focus_areas"][0]
+        assert len(fa.get("consequences_impacts", [])) == 1
+        assert len(fa.get("operational_barriers", [])) == 1
+
+    def test_expansion_payload_items_merged_by_category(self) -> None:
+        """Simulates an expansion pass payload: items from original + expansion
+        are merged correctly — same-category duplicates collapsed, cross-category kept."""
+        # Original payload: one ll item, one bar item
+        original = _dl_partial(
+            ll_items=[_ll_item("Supervision Deficit", "SRC1", "p.1")],
+            bar_items=[_bar_item("IT Outages", "SRC1", "p.2")],
+        )
+        # Expansion adds: new ll item (different title) + duplicate bar item + new con item
+        expansion = _dl_partial(
+            ll_items=[
+                _ll_item("Supervision Deficit", "SRC1", "p.1"),   # duplicate — should merge
+                _ll_item("Low Wages", "SRC1", "p.3"),              # new — should be added
+            ],
+            bar_items=[_bar_item("IT Outages", "SRC1", "p.2")],   # duplicate — should merge
+            con_items=[_con_item("Delayed Access", "SRC1", "p.4")],  # new category — kept
+        )
+        result = merge_outputs("domain_lessons_option_b", [original, expansion])
+        fa = result["domains"][0]["focus_areas"][0]
+        ll_titles = {i["title"] for i in fa.get("lessons_learnt", [])}
+        assert ll_titles == {"Supervision Deficit", "Low Wages"}, f"unexpected lessons_learnt: {ll_titles}"
+        assert len(fa.get("operational_barriers", [])) == 1, "IT Outages must not duplicate"
+        assert len(fa.get("consequences_impacts", [])) == 1, "expansion con item must be present"
