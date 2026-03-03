@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -463,20 +464,32 @@ def cmd_run(args: argparse.Namespace) -> int:
                 schema_rel, job_id=args.job,
                 label=f"extractor batch {batch_idx}: {src_name} locators={batch_locators}",
             )
+
+            batch_payloads: list[dict] = []
+            _batch_doc_ids = {
+                src.get("source_id", src.get("doc_id", "")) for src in batch
+            }
+
             if payload is None:
                 print(f"  Warning: no valid output for batch {batch_idx}", file=sys.stderr)
             else:
-                partial_outputs.append(payload)
+                batch_payloads.append(payload)
 
-                # Coverage expansion pass: if few locators are cited from a large batch,
-                # run a second sweep targeting under-captured categories.
-                _batch_doc_ids = {
-                    src.get("source_id", src.get("doc_id", "")) for src in batch
-                }
-                _n_cited = _count_cited_locators_in_payload(payload, _batch_doc_ids)
-                if _n_cited < 5 and len(batch_locators) >= 8:
+                # ── Coverage check: decide expansion vs delta ───────────────
+                _n_cited = len(_cited_locators_set(batch_payloads, _batch_doc_ids))
+                print(f"  [COVERAGE] batch {batch_idx}: {_n_cited}/{len(batch_locators)} locators cited after extraction")
+                _delta_threshold = min(5, math.ceil(len(batch_locators) * 0.5)) if batch_locators else 0
+                _skip_exp = _skip_expansion_when_delta_enabled() and _n_cited < _delta_threshold
+
+                # ── Expansion pass (skipped when delta is scheduled) ─────────
+                if _skip_exp:
                     print(
-                        f"  [EXPANSION] batch {batch_idx}: {_n_cited} locators cited / "
+                        f"  [EXPANSION] batch {batch_idx}: skipped — delta will run "
+                        f"(cited={_n_cited} < threshold={_delta_threshold}, HRH_SKIP_EXPANSION_WHEN_DELTA=1)"
+                    )
+                elif _n_cited < 5 and len(batch_locators) >= 8:
+                    print(
+                        f"  [EXPANSION] batch {batch_idx}: {_n_cited} cited / "
                         f"{len(batch_locators)} available — running expansion sweep..."
                     )
                     if call_delay > 0:
@@ -489,7 +502,117 @@ def cmd_run(args: argparse.Namespace) -> int:
                         label=f"expansion batch {batch_idx}",
                     )
                     if exp_payload is not None:
-                        partial_outputs.append(exp_payload)
+                        batch_payloads.append(exp_payload)
+
+                # ── Locator Delta Sweep (grouped, keyword-prioritised) ───────
+                _n_cited_post = len(_cited_locators_set(batch_payloads, _batch_doc_ids))
+                print(f"  [COVERAGE] batch {batch_idx}: {_n_cited_post}/{len(batch_locators)} locators cited after expansion")
+                if batch_locators and _n_cited_post < _delta_threshold:
+                    _cited_before_delta = _cited_locators_set(batch_payloads, _batch_doc_ids)
+                    _uncited = [loc for loc in batch_locators if loc and loc not in _cited_before_delta]
+                    _uncited_ranked = _rank_locators_by_keyword(_uncited, batch)
+
+                    # Fix B: skip entirely if no uncited locator has any keyword hit.
+                    # Since _rank_locators_by_keyword sorts by hit count desc, checking
+                    # only the top locator is sufficient.
+                    _all_kws: tuple[str, ...] = tuple(
+                        kw for kws in _PLANNER_KEYWORD_FAMILIES.values() for kw in kws
+                    )
+                    _locator_text: dict[str, str] = {
+                        snip.get("locator", ""): snip.get("text", "").lower()
+                        for src in batch
+                        for snip in src.get("snippets", [])
+                        if snip.get("locator")
+                    }
+                    _has_hits = bool(_uncited_ranked) and any(
+                        kw in _locator_text.get(_uncited_ranked[0], "") for kw in _all_kws
+                    )
+
+                    if not _has_hits:
+                        print(f"  [DELTA SWEEP] batch {batch_idx}: skipped — no keyword-hit uncited locators")
+                    else:
+                        # Fix A: group into _DELTA_GROUP_SIZE chunks, cap at _MAX_DELTA_CALLS_PER_BATCH
+                        _max_sweep = _DELTA_GROUP_SIZE * _MAX_DELTA_CALLS_PER_BATCH
+                        _to_sweep = _uncited_ranked[:_max_sweep]
+                        _groups = [
+                            _to_sweep[i:i + _DELTA_GROUP_SIZE]
+                            for i in range(0, len(_to_sweep), _DELTA_GROUP_SIZE)
+                        ]
+                        _groups = _groups[:_MAX_DELTA_CALLS_PER_BATCH]
+                        print(
+                            f"  [DELTA SWEEP] batch {batch_idx}: uncited={len(_uncited)}, "
+                            f"groups={len(_groups)}, running=min({len(_groups)}, {_MAX_DELTA_CALLS_PER_BATCH})"
+                        )
+                        _delta_new_items = 0
+                        _delta_new_locs: set[str] = set()
+                        for grp_idx, group_locs in enumerate(_groups):
+                            print(f"  [DELTA GROUP] locators={group_locs}")
+                            # Build mini-sources: one entry per unique source, only this group's snippets
+                            _mini_src_map: dict = {}
+                            for loc in group_locs:
+                                for src in batch:
+                                    for snip in src.get("snippets", []):
+                                        if snip.get("locator") == loc:
+                                            src_id = src.get("source_id", src.get("doc_id", str(id(src))))
+                                            if src_id not in _mini_src_map:
+                                                _mini_src_map[src_id] = {**src, "snippets": []}
+                                            _mini_src_map[src_id]["snippets"].append(snip)
+                                            break
+                            if not _mini_src_map:
+                                continue
+                            delta_tmp = tempfile.NamedTemporaryFile(
+                                mode="w", suffix=".json", delete=False, encoding="utf-8"
+                            )
+                            _json.dump(
+                                {"sources": list(_mini_src_map.values())},
+                                delta_tmp, ensure_ascii=False, indent=2,
+                            )
+                            delta_tmp.close()
+                            try:
+                                delta_rendered = render_prompt_for_job(
+                                    job_id=args.job,
+                                    template_path=str(job.prompt_template),
+                                    spec_path=str(job.spec_file),
+                                    spec_id=args.spec_id,
+                                    country_name=getattr(args, "country_name", None),
+                                    country_iso3=getattr(args, "country_iso3", None),
+                                    sources_path=delta_tmp.name,
+                                )
+                            except Exception as e:
+                                print(f"  [DELTA GROUP] render failed for group {group_locs!r}: {e}", file=sys.stderr)
+                                continue
+                            finally:
+                                Path(delta_tmp.name).unlink(missing_ok=True)
+                            if call_delay > 0:
+                                print(f"  Waiting {call_delay}s before delta group call...")
+                                time.sleep(call_delay)
+                            delta_payload = _llm_call_with_retry(
+                                delta_rendered + _DELTA_GROUP_SUFFIX,
+                                generate_json, LLMNotConfigured, _json,
+                                schema_rel, job_id=args.job,
+                                label=f"delta batch {batch_idx} group={group_locs}",
+                            )
+                            if delta_payload is not None:
+                                _before = _cited_locators_set(batch_payloads, _batch_doc_ids)
+                                batch_payloads.append(delta_payload)
+                                _after = _cited_locators_set(batch_payloads, _batch_doc_ids)
+                                _delta_new_locs |= (_after - _before)
+                                _delta_new_items += sum(
+                                    1
+                                    for domain in delta_payload.get("domains", [])
+                                    for fa in domain.get("focus_areas", [])
+                                    for cat in _DOMAIN_LESSONS_CATEGORIES
+                                    for item in fa.get(cat, [])
+                                    if item.get("citations")
+                                )
+                        print(
+                            f"  [DELTA SWEEP] batch {batch_idx}: added_items={_delta_new_items}; "
+                            f"newly_cited={sorted(_delta_new_locs)}"
+                        )
+                _n_final = len(_cited_locators_set(batch_payloads, _batch_doc_ids))
+                print(f"  [COVERAGE] batch {batch_idx}: {_n_final}/{len(batch_locators)} locators cited FINAL")
+
+            partial_outputs.extend(batch_payloads)
 
             if len(extraction_batches) > 1 and batch_idx < len(extraction_batches) and call_delay > 0:
                 print(f"  Waiting {call_delay}s for rate limit window...")
@@ -1009,6 +1132,21 @@ Apply the Category Fill Checklist and List/Table Expansion rules from the prompt
 Return a COMPLETE valid JSON payload — not just the new items.
 """
 
+_DELTA_GROUP_SUFFIX = """\n
+## DELTA MODE — Targeted multi-locator extraction
+
+You have been given excerpts from a small set of locators. Instructions:
+1. Extract ALL eligible items from ONLY the provided excerpts — apply the Category Fill Checklist and Granularity rules.
+2. Every item's citation MUST reference one of the locators in the provided excerpts.
+3. If an excerpt contains a list or table: extract EACH entry as a separate item (List/Table Expansion HARD RULE).
+4. Output ONLY NEW items not already present in the earlier extraction — do NOT repeat items already extracted.
+5. If an excerpt contains no eligible content, output empty category arrays — do NOT invent items.
+6. Return a COMPLETE, VALID JSON payload with all domains, all focus areas, all ten category arrays.
+"""
+
+_DELTA_GROUP_SIZE: int = 4
+_MAX_DELTA_CALLS_PER_BATCH: int = 2
+
 
 def _count_cited_locators_in_payload(payload: dict, doc_ids: set) -> int:
     """Count unique (doc_id, locator) pairs cited in payload that belong to doc_ids.
@@ -1028,6 +1166,58 @@ def _count_cited_locators_in_payload(payload: dict, doc_ids: set) -> int:
                         if doc_id in doc_ids and locator:
                             cited.add((doc_id, locator))
     return len(cited)
+
+
+def _skip_expansion_when_delta_enabled() -> bool:
+    """Return True when HRH_SKIP_EXPANSION_WHEN_DELTA is set (default on).
+
+    When enabled and the delta sweep is scheduled to run (cited < delta_threshold),
+    the expansion pass is skipped to avoid paying two rate-limit waits for the same
+    coverage recovery work.  Set to '0' to restore the old expansion-then-delta order.
+    """
+    return os.getenv("HRH_SKIP_EXPANSION_WHEN_DELTA", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _cited_locators_set(payloads: list[dict], doc_ids: set) -> set[str]:
+    """Return the set of locator strings cited in any of the payloads for the given doc_ids.
+
+    Aggregates across multiple payloads (original + expansion + prior delta calls) so
+    the delta sweep only targets locators not yet converted by any earlier call.
+    """
+    cited: set[str] = set()
+    for payload in payloads:
+        for domain in payload.get("domains", []):
+            for fa in domain.get("focus_areas", []):
+                for cat in _DOMAIN_LESSONS_CATEGORIES:
+                    for item in fa.get(cat, []):
+                        for cit in item.get("citations", []):
+                            if cit.get("doc_id", "") in doc_ids and cit.get("locator", ""):
+                                cited.add(cit["locator"])
+    return cited
+
+
+def _rank_locators_by_keyword(locators: list[str], batch: list[dict]) -> list[str]:
+    """Sort uncited locators by keyword-family hit count (descending).
+
+    Locators whose full text matches more keyword-family terms from
+    _PLANNER_KEYWORD_FAMILIES are swept first, maximising extraction yield
+    within the delta group budget. Zero-hit locators are kept at the back.
+    """
+    locator_text: dict[str, str] = {
+        snip.get("locator", ""): snip.get("text", "").lower()
+        for src in batch
+        for snip in src.get("snippets", [])
+        if snip.get("locator")
+    }
+    all_keywords: tuple[str, ...] = tuple(
+        kw for kws in _PLANNER_KEYWORD_FAMILIES.values() for kw in kws
+    )
+
+    def _hits(loc: str) -> int:
+        text = locator_text.get(loc, "")
+        return sum(1 for kw in all_keywords if kw in text)
+
+    return sorted(locators, key=_hits, reverse=True)
 
 
 def _log_coverage_warnings(job_id: str, payload: dict, all_sources: list[dict]) -> None:

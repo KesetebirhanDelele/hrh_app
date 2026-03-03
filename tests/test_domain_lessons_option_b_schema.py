@@ -655,3 +655,70 @@ def test_barrier_no_keyword_snippet_neutral_statement_fails() -> None:
     with pytest.raises(SchemaValidationError) as exc_info:
         validate_output(payload, SCHEMA)
     assert "operational_barriers" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# consequences_impacts — expanded keyword coverage (false-negative fixes)
+# ---------------------------------------------------------------------------
+
+def test_consequences_impacts_passes_for_impact_keyword() -> None:
+    """'impact' is a newly added keyword — snippet 'The impact of absenteeism ... is profound.' passes."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_010",
+        "title": "Impact of Absenteeism on Patients and Workers",
+        "statement": "The impact of absenteeism on patients and healthcare workers is profound.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.7",
+            "snippet": "The impact of absenteeism on patients and healthcare workers is profound.",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_consequences_impacts_passes_for_patient_safety_keyword() -> None:
+    """'patient safety' is a newly added keyword — 'Compromised patient safety and outcomes.' passes."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_011",
+        "title": "Compromised Patient Safety",
+        "statement": "Staff shortages directly compromised patient safety and care outcomes.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "moderate",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.8",
+            "snippet": "Compromised patient safety and outcomes.",
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_consequences_impacts_passes_for_suffering_keyword() -> None:
+    """'suffering' is a newly added keyword — snippet about staff shortages causing suffering passes."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    item = {
+        "item_id": "con_012",
+        "title": "Suffering Caused by Staff Shortages",
+        "statement": "Shortages of medical staff cause suffering for people in need of care.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "weak",
+        "citations": [{
+            "doc_id": "SRC1",
+            "source_title": "Vallieres et al. BMC Health Services Research 2018",
+            "locator": "p.9",
+            "snippet": (
+                "Needless to say, the shortages of medical staff cause suffering for people "
+                "in need of care and could have fatal consequences."
+            ),
+        }],
+    }
+    payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
+    validate_output(payload, SCHEMA)  # must not raise

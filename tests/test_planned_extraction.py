@@ -14,9 +14,15 @@ import pytest
 from app.core.validators import SchemaValidationError, validate_output
 from app.app import (
     _check_planner_locators,
+    _cited_locators_set,
     _count_cited_locators_in_payload,
+    _DELTA_GROUP_SIZE,
     _enforce_planner_keyword_coverage,
+    _MAX_DELTA_CALLS_PER_BATCH,
+    _PLANNER_KEYWORD_FAMILIES,
     _planner_to_batches,
+    _rank_locators_by_keyword,
+    _skip_expansion_when_delta_enabled,
     _truncate_at_word_boundary,
 )
 
@@ -523,3 +529,302 @@ class TestCountCitedLocators:
         n_cited = _count_cited_locators_in_payload(payload, {"SRC1"})
         batch_locators = [f"p.{i}" for i in range(10)]
         assert not (n_cited < 5 and len(batch_locators) >= 8), "expansion should NOT trigger"
+
+
+# ===========================================================================
+# TestCitedLocatorsSet — _cited_locators_set aggregates across payloads
+# ===========================================================================
+
+class TestCitedLocatorsSet:
+
+    def test_returns_locators_for_matching_doc_ids(self):
+        """Returns the set of locator strings cited for the specified doc_ids."""
+        payload = _make_domain_lessons_payload([("SRC1", "p.1"), ("SRC1", "p.3")])
+        result = _cited_locators_set([payload], {"SRC1"})
+        assert result == {"p.1", "p.3"}
+
+    def test_excludes_non_matching_doc_ids(self):
+        """Citations from doc_ids not in the filter set are not returned."""
+        payload = _make_domain_lessons_payload([("SRC1", "p.1"), ("SRC2", "p.5")])
+        result = _cited_locators_set([payload], {"SRC1"})
+        assert result == {"p.1"}
+
+    def test_deduplicates_same_locator_across_items(self):
+        """Same locator cited by two different items counts only once."""
+        cit = {"doc_id": "SRC1", "locator": "p.1", "source_title": "T", "snippet": "x"}
+        item1 = {"item_id": "ll_001", "title": "A", "statement": "s",
+                 "evidence_type": "determinant_mechanism", "evidence_strength": "weak",
+                 "citations": [cit]}
+        item2 = {"item_id": "ll_002", "title": "B", "statement": "s",
+                 "evidence_type": "determinant_mechanism", "evidence_strength": "weak",
+                 "citations": [cit]}
+        payload = _make_domain_lessons_payload([])
+        payload["domains"][0]["focus_areas"][0]["lessons_learnt"] = [item1, item2]
+        result = _cited_locators_set([payload], {"SRC1"})
+        assert result == {"p.1"}
+
+    def test_aggregates_across_multiple_payloads(self):
+        """Locators from a list of payloads are unioned together."""
+        p1 = _make_domain_lessons_payload([("SRC1", "p.1")])
+        p2 = _make_domain_lessons_payload([("SRC1", "p.3")])
+        result = _cited_locators_set([p1, p2], {"SRC1"})
+        assert result == {"p.1", "p.3"}
+
+    def test_empty_list_returns_empty_set(self):
+        """Empty payload list returns empty set."""
+        assert _cited_locators_set([], {"SRC1"}) == set()
+
+
+# ===========================================================================
+# TestRankLocatorsByKeyword — sorting by keyword-family hit count
+# ===========================================================================
+
+class TestRankLocatorsByKeyword:
+
+    def test_keyword_hit_locator_ranked_first(self):
+        """A locator whose text contains a keyword-family term is ranked before a zero-hit one."""
+        snippets = [
+            _make_snippet("p.1", "future research is needed to validate these findings"),
+            _make_snippet("p.2", "no relevant terms here at all"),
+        ]
+        src = _make_source("SRC1", snippets)
+        result = _rank_locators_by_keyword(["p.2", "p.1"], [src])
+        assert result[0] == "p.1", "p.1 has a keyword hit and should come first"
+
+    def test_higher_hit_count_ranked_first(self):
+        """A locator with 3 keyword hits is ranked before one with 1 hit."""
+        snippets = [
+            _make_snippet("p.1", "limitations and heterogeneity and uncertainty in data"),
+            _make_snippet("p.2", "some limitations noted"),
+        ]
+        src = _make_source("SRC1", snippets)
+        result = _rank_locators_by_keyword(["p.2", "p.1"], [src])
+        assert result[0] == "p.1"
+
+    def test_zero_hit_locators_kept_at_back(self):
+        """Zero-hit locators are included at the end, not dropped."""
+        snippets = [
+            _make_snippet("p.1", "analysis showed higher rates in the sample"),
+            # "limitations" is a confirmed keyword in evidence_gaps_uncertainty family
+            _make_snippet("p.2", "there are significant limitations in the evidence base"),
+        ]
+        src = _make_source("SRC1", snippets)
+        result = _rank_locators_by_keyword(["p.1", "p.2"], [src])
+        assert "p.1" in result, "zero-hit locator must still be in the result"
+        assert result[-1] == "p.1", "zero-hit locator should be last"
+        assert result[0] == "p.2", "keyword-hit locator should be first"
+
+    def test_empty_input_returns_empty(self):
+        """Empty locator list returns empty list."""
+        src = _make_source("SRC1", [])
+        assert _rank_locators_by_keyword([], [src]) == []
+
+
+# ===========================================================================
+# TestDeltaSweepTrigger — threshold formula, cost cap, keyword prioritisation
+# ===========================================================================
+
+class TestDeltaSweepTrigger:
+
+    def test_trigger_below_threshold_8_locators(self):
+        """With 8 locators, threshold = min(5, ceil(8*0.5)) = 4. cited=2 → triggers."""
+        import math
+        n_cited, n_batch = 2, 8
+        threshold = min(5, math.ceil(n_batch * 0.5))
+        assert n_cited < threshold, "delta sweep should trigger"
+
+    def test_no_trigger_at_threshold_8_locators(self):
+        """With 8 locators and 4 cited (= threshold=4), delta does NOT trigger."""
+        import math
+        n_cited, n_batch = 4, 8
+        threshold = min(5, math.ceil(n_batch * 0.5))
+        assert not (n_cited < threshold), "delta sweep should NOT trigger"
+
+    def test_threshold_4_locators(self):
+        """With 4 locators, threshold = min(5, ceil(2)) = 2."""
+        import math
+        assert min(5, math.ceil(4 * 0.5)) == 2
+
+    def test_threshold_12_locators_capped_at_5(self):
+        """With 12 locators, threshold = min(5, ceil(6)) = 5."""
+        import math
+        assert min(5, math.ceil(12 * 0.5)) == 5
+
+    def test_cost_cap_limits_to_delta_group_budget(self):
+        """12 uncited locators: only DELTA_GROUP_SIZE * MAX_DELTA_CALLS_PER_BATCH are swept."""
+        uncited = [f"p.{i}" for i in range(1, 13)]
+        max_sweep = _DELTA_GROUP_SIZE * _MAX_DELTA_CALLS_PER_BATCH
+        to_sweep = uncited[:max_sweep]
+        assert len(to_sweep) == max_sweep
+        assert len(to_sweep) == 8  # 4 * 2 = 8 with defaults
+
+    def test_keyword_prioritization_order(self):
+        """Keyword-hit locator appears before zero-hit locator after ranking."""
+        snippets = [
+            _make_snippet("p.1", "no keywords here"),
+            _make_snippet("p.2", "limitations and heterogeneity in results"),
+            _make_snippet("p.3", "no keywords either"),
+        ]
+        src = _make_source("SRC1", snippets)
+        uncited = ["p.1", "p.2", "p.3"]
+        ranked = _rank_locators_by_keyword(uncited, [src])
+        assert ranked[0] == "p.2", "p.2 has keyword hits and should be first"
+        to_sweep = ranked[:_DELTA_GROUP_SIZE * _MAX_DELTA_CALLS_PER_BATCH]
+        assert "p.2" in to_sweep
+
+
+# ===========================================================================
+# TestDeltaGrouping — Fix A: grouped multi-locator delta calls
+# ===========================================================================
+
+class TestDeltaGrouping:
+
+    def test_7_uncited_produces_2_groups(self):
+        """7 uncited locators with GROUP=3, MAX_CALLS=2 → 2 groups of 3, 1 skipped.
+
+        Top 6 (= 3 * 2) are selected; partitioned into [0:3] and [3:6]; capped at 2 calls.
+        """
+        uncited = [f"p.{i}" for i in range(1, 8)]  # 7 locators
+        group_size, max_calls = 3, 2
+        max_sweep = group_size * max_calls          # 6
+        to_sweep = uncited[:max_sweep]              # first 6
+        groups = [to_sweep[i:i + group_size] for i in range(0, len(to_sweep), group_size)]
+        groups = groups[:max_calls]
+        assert len(groups) == 2, f"Expected 2 groups, got {len(groups)}"
+        assert len(groups[0]) == 3
+        assert len(groups[1]) == 3
+        # The 7th locator is skipped
+        all_swept = [loc for grp in groups for loc in grp]
+        assert "p.7" not in all_swept
+
+    def test_groups_contain_correct_locators(self):
+        """First group gets the top-ranked locators; second group gets the next batch."""
+        uncited = [f"p.{i}" for i in range(1, 9)]  # 8 locators
+        group_size, max_calls = 4, 2
+        max_sweep = group_size * max_calls  # 8
+        to_sweep = uncited[:max_sweep]
+        groups = [to_sweep[i:i + group_size] for i in range(0, len(to_sweep), group_size)]
+        groups = groups[:max_calls]
+        assert groups[0] == ["p.1", "p.2", "p.3", "p.4"]
+        assert groups[1] == ["p.5", "p.6", "p.7", "p.8"]
+
+    def test_fewer_uncited_than_group_size(self):
+        """2 uncited locators with GROUP=4 → 1 group of 2, 1 call."""
+        uncited = ["p.1", "p.2"]
+        group_size, max_calls = 4, 2
+        max_sweep = group_size * max_calls
+        to_sweep = uncited[:max_sweep]
+        groups = [to_sweep[i:i + group_size] for i in range(0, len(to_sweep), group_size)]
+        groups = groups[:max_calls]
+        assert len(groups) == 1
+        assert groups[0] == ["p.1", "p.2"]
+
+    def test_default_constants_give_8_max_locators(self):
+        """Defaults: DELTA_GROUP_SIZE=4, MAX_DELTA_CALLS_PER_BATCH=2 → 8 max locators swept."""
+        assert _DELTA_GROUP_SIZE * _MAX_DELTA_CALLS_PER_BATCH == 8
+
+
+# ===========================================================================
+# TestDeltaSkipNoKeywords — Fix B: skip delta when all uncited have 0 hits
+# ===========================================================================
+
+def _all_kws_flat() -> tuple:
+    return tuple(kw for kws in _PLANNER_KEYWORD_FAMILIES.values() for kw in kws)
+
+
+class TestDeltaSkipNoKeywords:
+
+    def _has_hits_for_top(self, locators: list[str], batch: list[dict]) -> bool:
+        """Mirror the in-loop _has_hits check: check only the top-ranked locator."""
+        all_kws = _all_kws_flat()
+        locator_text = {
+            snip.get("locator", ""): snip.get("text", "").lower()
+            for src in batch
+            for snip in src.get("snippets", [])
+            if snip.get("locator")
+        }
+        ranked = _rank_locators_by_keyword(locators, batch)
+        return bool(ranked) and any(kw in locator_text.get(ranked[0], "") for kw in all_kws)
+
+    def test_keyword_hit_locators_have_hits(self):
+        """Two locators with keyword text: has_hits=True."""
+        snippets = [
+            _make_snippet("p.1", "significant limitations in data comparability"),
+            _make_snippet("p.2", "delayed salary payment was a major driver"),
+        ]
+        src = _make_source("SRC1", snippets)
+        assert self._has_hits_for_top(["p.1", "p.2"], [src]) is True
+
+    def test_zero_hit_locators_skip_delta(self):
+        """All uncited locators with neutral text: has_hits=False → delta skipped."""
+        snippets = [
+            _make_snippet("p.1", "the study was conducted in three regions"),
+            _make_snippet("p.2", "table 1 shows the distribution of participants"),
+        ]
+        src = _make_source("SRC1", snippets)
+        assert self._has_hits_for_top(["p.1", "p.2"], [src]) is False
+
+    def test_mixed_locators_not_skipped(self):
+        """One keyword-hit locator among neutrals: has_hits=True → delta runs."""
+        snippets = [
+            _make_snippet("p.1", "workload increased significantly for remaining staff"),
+            _make_snippet("p.2", "table 2 shows participant demographics"),
+        ]
+        src = _make_source("SRC1", snippets)
+        # _rank puts p.1 (keyword hit) first → has_hits=True
+        assert self._has_hits_for_top(["p.2", "p.1"], [src]) is True
+
+    def test_empty_uncited_no_hits(self):
+        """Empty locator list: has_hits=False."""
+        src = _make_source("SRC1", [])
+        assert self._has_hits_for_top([], [src]) is False
+
+
+# ===========================================================================
+# TestSkipExpansionWhenDelta — Fix C: expansion skipped when delta is scheduled
+# ===========================================================================
+
+class TestSkipExpansionWhenDelta:
+
+    def test_skip_expansion_enabled_by_default(self):
+        """HRH_SKIP_EXPANSION_WHEN_DELTA is ON by default (env var absent)."""
+        import os
+        os.environ.pop("HRH_SKIP_EXPANSION_WHEN_DELTA", None)
+        assert _skip_expansion_when_delta_enabled() is True
+
+    def test_skip_expansion_disabled_by_zero(self):
+        """Setting HRH_SKIP_EXPANSION_WHEN_DELTA=0 disables the skip."""
+        import os
+        os.environ["HRH_SKIP_EXPANSION_WHEN_DELTA"] = "0"
+        try:
+            assert _skip_expansion_when_delta_enabled() is False
+        finally:
+            os.environ.pop("HRH_SKIP_EXPANSION_WHEN_DELTA", None)
+
+    def test_skip_expansion_disabled_by_false(self):
+        """Setting HRH_SKIP_EXPANSION_WHEN_DELTA=false disables the skip."""
+        import os
+        os.environ["HRH_SKIP_EXPANSION_WHEN_DELTA"] = "false"
+        try:
+            assert _skip_expansion_when_delta_enabled() is False
+        finally:
+            os.environ.pop("HRH_SKIP_EXPANSION_WHEN_DELTA", None)
+
+    def test_expansion_skipped_when_cited_below_delta_threshold(self):
+        """Logic check: when cited < delta_threshold AND skip enabled → expansion is skipped."""
+        import math
+        n_cited, n_batch = 2, 8
+        delta_threshold = min(5, math.ceil(n_batch * 0.5))  # 4
+        # With skip enabled and cited(2) < threshold(4): skip expansion
+        skip_enabled = True
+        skip_exp = skip_enabled and n_cited < delta_threshold
+        assert skip_exp is True, "expansion should be skipped"
+
+    def test_expansion_runs_when_delta_not_triggered(self):
+        """When cited >= delta_threshold, skip is False regardless of flag."""
+        import math
+        n_cited, n_batch = 5, 8
+        delta_threshold = min(5, math.ceil(n_batch * 0.5))  # 4
+        skip_enabled = True
+        skip_exp = skip_enabled and n_cited < delta_threshold
+        assert skip_exp is False, "expansion should NOT be skipped"

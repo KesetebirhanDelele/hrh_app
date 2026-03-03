@@ -180,6 +180,9 @@ _CI_IMPACT_KEYWORDS = (
     "consequence", "resulted in", "led to", "increased", "delayed",
     "burden", "cost", "workload", "quality", "access", "reduced",
     "overwhelm", "overwhelmed", "stress", "strain",
+    # Expanded: common health-literature impact framing
+    "impact", "profound", "suffering", "harm", "patient safety",
+    "outcomes", "compromised", "risk", "mortality", "morbidity",
 )
 
 # Broad terms used in the fallback check: if a snippet contains one of these AND
