@@ -605,3 +605,15 @@ ruff check app/
 ## Contact
 
 [Add contact information]
+
+## Latest to run extraction:
+
+python -m app.app run --job domain_lessons_option_b --mode llm_planned `
+  --spec-id domain_lessons_option_b_v1 `
+  --country-name "global_test" `
+  --sources data/sources/global_test_sources.json
+
+
+py -3.12 -m app.app render-xlsx `
+  --job domain_lessons_option_b `
+  --file outputs/domain_lessons_option_b/GLOBAL_TEST_20260303_215351/output_llm_planned.json
