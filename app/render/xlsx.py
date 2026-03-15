@@ -234,7 +234,8 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
         ws.title = "items"
         _write_header(ws, [
             "domain_id", "focus_area_id", "category", "item_id", "title",
-            "evidence_type", "evidence_strength", "statement", "mechanism", "citations",
+            "evidence_type", "evidence_strength", "statement", "mechanism",
+            "applicable_countries", "citations",
         ])
         for domain in payload.get("domains", []):
             d_id = domain.get("domain_id", "")
@@ -246,6 +247,7 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
                             f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
                             for c in item.get("citations", [])
                         )
+                        countries = ", ".join(item.get("applicable_countries") or [])
                         ws.append([
                             d_id, fa_id, cat,
                             item.get("item_id", ""),
@@ -254,6 +256,7 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
                             item.get("evidence_strength", ""),
                             item.get("statement", ""),
                             item.get("mechanism", "") or "",
+                            countries,
                             cit_lines,
                         ])
         _autosize(ws)
@@ -265,7 +268,7 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
         ws2 = wb.create_sheet("costs")
         _write_header(ws2, [
             "domain_id", "focus_area_id", "item_id", "title",
-            "intensity", "cost_drivers", "statement", "citations",
+            "intensity", "cost_drivers", "statement", "applicable_countries", "citations",
         ])
         for domain in payload.get("domains", []):
             d_id = domain.get("domain_id", "")
@@ -276,6 +279,7 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
                         f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
                         for c in item.get("citations", [])
                     )
+                    countries = ", ".join(item.get("applicable_countries") or [])
                     ws2.append([
                         d_id, fa_id,
                         item.get("item_id", ""),
@@ -283,6 +287,7 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
                         item.get("intensity", ""),
                         "; ".join(item.get("cost_drivers", []) or []),
                         item.get("statement", ""),
+                        countries,
                         cit_lines,
                     ])
         _autosize(ws2)

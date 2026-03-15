@@ -722,3 +722,121 @@ def test_consequences_impacts_passes_for_suffering_keyword() -> None:
     }
     payload["domains"][0]["focus_areas"][0]["consequences_impacts"] = [item]
     validate_output(payload, SCHEMA)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# applicable_countries — schema and renderer tests
+# ---------------------------------------------------------------------------
+
+def test_item_with_applicable_countries_passes() -> None:
+    """Item with applicable_countries array is valid."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["applicable_countries"] = [
+        "Ethiopia", "Kenya"
+    ]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_item_with_empty_applicable_countries_passes() -> None:
+    """Item with applicable_countries as empty array is valid."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["applicable_countries"] = []
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_item_without_applicable_countries_passes() -> None:
+    """Item without applicable_countries at all (field omitted) remains valid."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    # Ensure field is absent (default fixture has no applicable_countries)
+    assert "applicable_countries" not in payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_item_applicable_countries_non_string_fails() -> None:
+    """applicable_countries containing a non-string entry fails schema validation."""
+    bad = copy.deepcopy(VALID_PAYLOAD)
+    bad["domains"][0]["focus_areas"][0]["proven_interventions"][0]["applicable_countries"] = [123]
+    with pytest.raises(SchemaValidationError):
+        validate_output(bad, SCHEMA)
+
+
+def test_cost_item_with_applicable_countries_passes() -> None:
+    """CostItem also accepts applicable_countries."""
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["costs_resource_intensity"][0]["applicable_countries"] = [
+        "Bangladesh"
+    ]
+    validate_output(payload, SCHEMA)  # must not raise
+
+
+def test_xlsx_applicable_countries_column_present() -> None:
+    """XLSX items sheet has an 'applicable_countries' column header."""
+    openpyxl = pytest.importorskip("openpyxl")
+    import tempfile
+    from pathlib import Path
+    from app.render.xlsx import render_xlsx
+
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["applicable_countries"] = [
+        "Ethiopia", "Kenya"
+    ]
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        tmp_path = f.name
+    try:
+        render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
+        wb = openpyxl.load_workbook(tmp_path)
+        ws = wb["items"]
+        headers = [cell.value for cell in ws[1]]
+        assert "applicable_countries" in headers, f"Header missing. Found: {headers}"
+        col_idx = headers.index("applicable_countries")
+        # Check the data row has the countries value
+        data_row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
+        assert data_row[col_idx] == "Ethiopia, Kenya"
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_xlsx_applicable_countries_blank_when_absent() -> None:
+    """XLSX items sheet has empty applicable_countries cell when field is absent."""
+    openpyxl = pytest.importorskip("openpyxl")
+    import tempfile
+    from pathlib import Path
+    from app.render.xlsx import render_xlsx
+
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    # No applicable_countries on the item
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        tmp_path = f.name
+    try:
+        render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
+        wb = openpyxl.load_workbook(tmp_path)
+        ws = wb["items"]
+        headers = [cell.value for cell in ws[1]]
+        col_idx = headers.index("applicable_countries")
+        data_row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
+        assert data_row[col_idx] in ("", None)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_md_applicable_countries_rendered() -> None:
+    """Markdown output includes 'Countries:' line when applicable_countries is present."""
+    from app.render.md import render_markdown
+
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["applicable_countries"] = [
+        "Ethiopia", "Kenya"
+    ]
+    md = render_markdown("domain_lessons_option_b", payload)
+    assert "Countries: Ethiopia, Kenya" in md
+
+
+def test_md_applicable_countries_absent_when_empty() -> None:
+    """Markdown output has no 'Countries:' line when applicable_countries is absent."""
+    from app.render.md import render_markdown
+
+    payload = copy.deepcopy(VALID_PAYLOAD)
+    md = render_markdown("domain_lessons_option_b", payload)
+    assert "Countries:" not in md

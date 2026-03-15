@@ -49,6 +49,10 @@
           "type": "string",
           "enum": ["strong", "moderate", "weak"]
         },
+        "applicable_countries": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" }
+        },
         "citations": {
           "type": "array",
           "minItems": 1,
@@ -67,6 +71,10 @@
         "intensity": {
           "type": "string",
           "enum": ["low", "medium", "high", "unknown"]
+        },
+        "applicable_countries": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" }
         },
         "cost_drivers": {
           "type": "array",

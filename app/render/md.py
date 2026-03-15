@@ -250,6 +250,9 @@ def render_markdown(job_id: str, payload: Dict[str, Any]) -> str:
                             f" [{strength}]\n\n"
                         )
                         out.append(f"{_md_escape(item.get('statement', ''))}\n\n")
+                        countries = item.get("applicable_countries") or []
+                        if countries:
+                            out.append(f"_Countries: {', '.join(_md_escape(c) for c in countries)}_\n\n")
                         out.extend(_render_item_cits(item))
                 costs = fa.get(_COST_CAT_MD, [])
                 if costs:
@@ -262,6 +265,9 @@ def render_markdown(job_id: str, payload: Dict[str, Any]) -> str:
                             f" [intensity: {intensity}]\n\n"
                         )
                         out.append(f"{_md_escape(item.get('statement', ''))}\n\n")
+                        countries = item.get("applicable_countries") or []
+                        if countries:
+                            out.append(f"_Countries: {', '.join(_md_escape(c) for c in countries)}_\n\n")
                         out.extend(_render_item_cits(item))
                 if not has_content:
                     out.append("_No evidence extracted for this focus area._\n\n")
