@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 _QUALITY_RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
 _STRENGTH_RANK = {"strong": 3, "moderate": 2, "weak": 1}
 _INTENSITY_RANK = {"high": 4, "medium": 3, "low": 2, "unknown": 1}
 _MAX_CITATIONS_PER_SOLUTION = 3
+CITATION_CAP_PER_ITEM: int = 5
+
+
+def _normalize_for_dedupe(s: str) -> str:
+    """Normalize a title/statement string for semantic deduplication.
+
+    Lowercases, strips leading articles, collapses whitespace, and removes
+    trailing punctuation so that near-identical phrasings hash to the same key.
+    """
+    s = s.lower().strip()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"[.,:;!?'\"]+$", "", s.rstrip())
+    # Strip leading articles that do not affect meaning
+    s = re.sub(r"^(the|a|an) ", "", s)
+    return s
 
 # Ten category arrays per focus-area in domain_lessons_option_b
 _ITEM_CATEGORIES = (
@@ -321,8 +337,13 @@ def _merge_domain_lessons(partial_outputs: List[Dict[str, Any]]) -> Dict[str, An
                     merged_map[d_id][fa_id] = {cat: {} for cat in _ALL_LESSON_CATEGORIES}
                 for cat in _ALL_LESSON_CATEGORIES:
                     for item in fa.get(cat, []):
-                        title_key = item.get("title", "").strip().lower()
-                        if not title_key:
+                        # Include evidence_type in key so proven items and recommendation-only
+                        # items with the same title are never merged across evidence types.
+                        title_key = (
+                            _normalize_for_dedupe(item.get("title", "")),
+                            item.get("evidence_type", ""),
+                        )
+                        if not title_key[0]:
                             continue
                         cat_map = merged_map[d_id][fa_id][cat]
                         if title_key not in cat_map:
@@ -352,6 +373,33 @@ def _merge_domain_lessons(partial_outputs: List[Dict[str, Any]]) -> Dict[str, An
                                 im = (item.get("mechanism") or "").strip()
                                 if im and not em:
                                     existing["mechanism"] = im
+                                # Prefer first non-empty value for single-string enrichment fields
+                                for _str_field in (
+                                    "evidence_summary",
+                                    "evidence_design_type",
+                                    "target_cadre_setting",
+                                    "governance_operating_model",
+                                    "expected_impact",
+                                ):
+                                    if not (existing.get(_str_field) or "").strip():
+                                        incoming = (item.get(_str_field) or "").strip()
+                                        if incoming:
+                                            existing[_str_field] = incoming
+                                # Union intervention_risks (deduplicate by normalised text)
+                                existing_risks: list = existing.get("intervention_risks") or []
+                                seen_risks: set[str] = {r.strip().lower() for r in existing_risks}
+                                for risk in item.get("intervention_risks") or []:
+                                    if risk.strip().lower() not in seen_risks:
+                                        seen_risks.add(risk.strip().lower())
+                                        existing_risks.append(risk)
+                                if existing_risks:
+                                    existing["intervention_risks"] = existing_risks[:3]  # cap at 3
+                            # Union applicable_countries
+                            existing_countries: set[str] = set(existing.get("applicable_countries") or [])
+                            for c in item.get("applicable_countries") or []:
+                                existing_countries.add(c)
+                            if existing_countries:
+                                existing["applicable_countries"] = sorted(existing_countries)
                             # Combine citations (deduplicate by doc_id + locator)
                             seen_cits: set[tuple] = {
                                 (c.get("doc_id", ""), c.get("locator", ""))
@@ -362,7 +410,9 @@ def _merge_domain_lessons(partial_outputs: List[Dict[str, Any]]) -> Dict[str, An
                                 if key not in seen_cits:
                                     seen_cits.add(key)
                                     existing.setdefault("citations", []).append(cit)
-                            existing["citations"] = _cap_citations_by_source(existing.get("citations", []))
+                            existing["citations"] = _cap_citations_by_source(
+                                existing.get("citations", []), max_cits=CITATION_CAP_PER_ITEM
+                            )
 
     # Reconstruct domains list preserving order from base, renumbering item_ids
     result_domains = []
@@ -376,10 +426,14 @@ def _merge_domain_lessons(partial_outputs: List[Dict[str, Any]]) -> Dict[str, An
             result_fa: Dict[str, Any] = {"focus_area_id": fa_id}
             for cat in _ALL_LESSON_CATEGORIES:
                 abbrev = _CATEGORY_ABBREV[cat]
+                # Short stable prefixes for domain and focus_area in intervention_id
+                _d_short = (d_id or "")[:3]
+                _fa_short = (fa_id or "")[:6]
                 items = []
                 for n, item in enumerate(cat_maps.get(cat, {}).values(), 1):
                     item = dict(item)
                     item["item_id"] = f"{abbrev}_{n:03d}"
+                    item["intervention_id"] = f"{_d_short}_{_fa_short}_{abbrev}_{n:03d}"
                     items.append(item)
                 result_fa[cat] = items
             result_fas.append(result_fa)
@@ -401,14 +455,16 @@ def merge_outputs(
     """
     if not partial_outputs:
         raise ValueError("merge_outputs: no partial outputs to merge")
-    if len(partial_outputs) == 1:
-        return partial_outputs[0]
 
     if job_id == "domain_solutions_from_evidence":
         return _merge_domain_solutions(partial_outputs)
 
     if job_id == "domain_lessons_option_b":
+        # Always run merge for this job_id so intervention_id is assigned
         return _merge_domain_lessons(partial_outputs)
+
+    if len(partial_outputs) == 1:
+        return partial_outputs[0]
 
     config = MERGE_CONFIG.get(job_id)
     if not config:

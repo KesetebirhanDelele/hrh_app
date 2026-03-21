@@ -1,494 +1,216 @@
 # HRH App
 
-Human Resources for Health (HRH) analysis tool with LLM-powered evidence extraction and multi-format rendering.
+Human Resources for Health (HRH) evidence extraction and analysis tool. Uses LLM-powered document analysis to extract structured evidence from source documents and render decision-ready deliverables (Excel, Word, Markdown) for country health workforce assessments.
+
+## Contents
+
+- [Quickstart](#quickstart)
+- [Jobs Overview](#jobs-overview)
+- [Domain Lessons Extraction Pipeline](#domain-lessons-extraction-pipeline)
+- [Running a Job](#running-a-job)
+- [Sources and RAG](#sources-and-rag)
+- [Rendering Outputs](#rendering-outputs)
+- [Multi-Country Batch Analysis](#multi-country-batch-analysis)
+- [Environment Variables](#environment-variables)
+- [CLI Reference](#cli-reference)
+- [Development](#development)
+
+---
 
 ## Quickstart
 
-### 1. Create Environment
+### 1. Create environment
 
 ```bash
-# Using conda (recommended)
+# conda (recommended)
 conda create -n hrh_app python=3.10
 conda activate hrh_app
 
-# Or using venv
+# or venv
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Linux/macOS
+.venv\Scripts\activate           # Windows
 ```
 
-### 2. Install Dependencies
+### 2. Install
 
 ```bash
 pip install -e .
 ```
 
-### 3. Set Environment Variables
+### 3. Configure credentials
 
-**Required:**
 ```bash
+# Required
 export HRH_LLM_PROVIDER=openai
-export OPENAI_API_KEY=your-api-key-here
-```
+export OPENAI_API_KEY=your-key
 
-**Optional:**
-```bash
-# Enforce strict citation validation (requires source_url, reference, doi, or isbn)
-export HRH_STRICT_CITATIONS=1
-
-# Use a specific OpenAI model (default: gpt-4o-mini)
-export HRH_OPENAI_MODEL=gpt-4o
-
-# Note: When using --sources flag, HRH_ENFORCE_ALLOWED_SOURCES and HRH_ALLOWED_SOURCE_IDS
-# are automatically set to validate citations reference only curated sources
-```
-
-**Windows (PowerShell):**
-```powershell
+# Windows PowerShell
 $env:HRH_LLM_PROVIDER="openai"
-$env:OPENAI_API_KEY="your-api-key-here"
-$env:HRH_STRICT_CITATIONS="1"  # optional
+$env:OPENAI_API_KEY="your-key"
 ```
 
-### 4. Run Jobs
+### 4. Run a job
 
 ```bash
-# Generate output using LLM
-python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH
+# Grounded extraction with source documents
+python -m app.app run \
+  --job domain_lessons_option_b \
+  --mode llm_planned \
+  --spec-id domain_lessons_option_b_v2 \
+  --country-name "Global" \
+  --sources data/sources/global_sources.json
 
-# With curated sources (for grounded citations)
-python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH --sources data/sources/ethiopia_sources.json
-
-# Or generate stub output (no LLM required)
-python -m app.app run --job phase1_discovery_qa --mode stub --spec-id test_spec --country-name Ethiopia --country-iso3 ETH
+# Render Excel MENU output
+python -m app.app render-xlsx \
+  --job domain_lessons_option_b \
+  --file outputs/domain_lessons_option_b/Global_20260320_120000/output_llm_planned.json
 ```
 
-### 5. Render Outputs
-
-```bash
-# Markdown (all jobs) - auto-detects country from folder structure
-python -m app.app render-md --job phase1_discovery_qa --file outputs/phase1_discovery_qa/Ethiopia/output_llm_ETH_20260208_123456.json
-
-# Excel (table jobs: rrr, table2, table3, benchmark)
-python -m app.app render-xlsx --job rrr_evidence_matrix --file outputs/rrr_evidence_matrix/ETH/output_llm_ETH_20260208_123456.json
-
-# Word (narrative jobs: phase1, learning_briefs)
-python -m app.app render-docx --job phase1_discovery_qa --file outputs/phase1_discovery_qa/Ethiopia/output_llm_ETH_20260208_123456.json
-
-# All render commands auto-generate timestamped output filenames
-# Country info is auto-detected from folder paths, or specify manually:
-python -m app.app render-md --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json --country-name Ethiopia --country-iso3 ETH
-```
-
-### 6. Batch Operations
-
-Run or render all jobs at once:
-
-```bash
-# Run all jobs in batch (stub mode)
-python -m app.app run-all --mode stub --country-name Ethiopia --country-iso3 ETH
-
-# Run all jobs with LLM
-python -m app.app run-all --mode llm --country-name Ethiopia --country-iso3 ETH --sources data/sources/eth_sources.json
-
-# Render all deliverables from existing outputs
-python -m app.app render-all --mode stub
-python -m app.app render-all --mode llm
-```
-
-**Output Organization:** All outputs are organized in timestamped country folders:
-
-**Folder Structure:**
-```
-outputs/
-  {job_id}/
-    {COUNTRY}_{TIMESTAMP}/
-      output_llm.json
-      output_llm.md
-      output_llm.docx
-      output_llm.xlsx
-```
-
-- `COUNTRY`: ISO3 code (ETH, KEN) or country name (Ethiopia, Kenya)
-- `TIMESTAMP`: UTC timestamp (YYYYMMDD_HHMMSS)
-- All files from a single run are grouped in one timestamped folder
-- Each run creates a new timestamped folder automatically
-
-**Example:**
-```
-outputs/
-  country_learning_briefs/
-    ETH_20260208_051534/
-      output_llm.json
-      output_llm.md
-      output_llm.docx
-  table2_root_cause_mapping/
-    Kenya_20260208_051528/
-      output_stub.json
-      output_stub.md
-      output_stub.xlsx
-    run_20260208_052010/      ← No country specified
-      output_llm.json
-      output_llm.xlsx
-```
-
-**Country Auto-Detection:**
-- If `--country-name` or `--country-iso3` is provided → folder uses that country
-- If not provided → auto-detects country from current folder path
-- If no country detected → folder named `run_{TIMESTAMP}`
-- Manual arguments always override auto-detection
-
-The `run-all` command:
-- Runs every job in the registry with the same parameters
-- Prints progress for each job
-- Shows a summary of successes/failures
-
-The `render-all` command:
-- Renders deliverables for all jobs from existing output files
-- Finds the most recent timestamped folder for each job
-- Outputs all rendered files to the same timestamped folder as the source JSON
-- Narrative jobs (phase1_discovery_qa, country_learning_briefs) → DOCX only
-- Table jobs (rrr_evidence_matrix, table2_root_cause_mapping, table3_intervention_framework, benchmark_country_scoring) → XLSX only
-- Skips jobs with missing output files
-- Shows a summary of successes/skips/errors
-
-## Multi-Country Analysis
-
-### Single Country Workflow
-
-To run analysis for **one country**, follow this three-step workflow:
-
-**1. (Optional) Scan source files:**
-```powershell
-python -m app.app sources-scan --country-iso3 ETH
-```
-This auto-generates `data/sources/eth_sources.json` from files in `data/sources/ETH/pdf/` and `data/sources/ETH/docx/`.
-
-**2. Run all jobs with LLM:**
-```powershell
-$env:HRH_STRICT_CITATIONS = "1"
-python -m app.app run-all --mode llm `
-    --country-name Ethiopia `
-    --country-iso3 ETH `
-    --sources data/sources/eth_sources.json
-```
-
-**3. Render outputs (DOCX and XLSX):**
-```powershell
-python -m app.app render-all --mode llm `
-    --country-name Ethiopia `
-    --country-iso3 ETH
-```
-
-**Output location:**
-```
-outputs/
-  phase1_discovery_qa/
-    ETH_20260208_120000/
-      output_llm.json
-      output_llm.docx
-  table2_root_cause_mapping/
-    ETH_20260208_120100/
-      output_llm.json
-      output_llm.xlsx
-  ...
-```
-
-### Multi-Country Workflow
-
-To run analysis for **multiple countries**, use the provided PowerShell script with **automatic country discovery**:
-
-**1. Organize source documents:**
-
-Organize your source documents by ISO3 country code:
-```
-data/sources/
-├── ETH/
-│   ├── pdf/
-│   │   ├── document1.pdf
-│   │   └── document2.pdf
-│   └── docx/
-│       └── document3.docx
-├── KEN/
-│   ├── pdf/
-│   └── docx/
-└── UGA/
-    ├── pdf/
-    └── docx/
-```
-
-**Important:** Folder names MUST be valid ISO3 country codes (3 uppercase letters, e.g., ETH, KEN, UGA).
-
-**2. Run the script:**
-```powershell
-.\run_all_countries.ps1
-```
-
-The script will:
-- ✅ **Auto-discover** all country folders in `data/sources/`
-- ✅ Map ISO3 codes to country names (ETH → Ethiopia, KEN → Kenya, etc.)
-- ✅ Auto-generate source JSON files from PDF/DOCX documents
-- ✅ Process each country in sequence
-- ✅ Run all jobs with LLM for each country
-- ✅ Render all outputs (DOCX and XLSX)
-- ✅ Show progress and timing for each country
-- ✅ Display a final summary with success/failure status
-
-**No configuration needed!** Just add a new country folder with ISO3 code and run the script.
-
-**Output structure (multi-country):**
-```
-outputs/
-  phase1_discovery_qa/
-    ETH_20260208_120000/
-      output_llm.json
-      output_llm.docx
-    KEN_20260208_130000/
-      output_llm.json
-      output_llm.docx
-    UGA_20260208_140000/
-      output_llm.json
-      output_llm.docx
-  table2_root_cause_mapping/
-    ETH_20260208_120100/
-      output_llm.json
-      output_llm.xlsx
-    KEN_20260208_130100/
-      output_llm.json
-      output_llm.xlsx
-    UGA_20260208_140100/
-      output_llm.json
-      output_llm.xlsx
-  ...
-```
-
-Each country gets its own timestamped folders, making it easy to:
-- Compare outputs across countries
-- Track when each country was analyzed
-- Rerun individual countries without affecting others
-
-**Adding new countries:**
-To add a new country:
-1. Add the country's ISO3 code to the `$countryNames` mapping in the script (if not already present)
-2. Create a folder `data/sources/{ISO3}/` with `pdf/` and `docx/` subdirectories
-3. Add your source documents
-4. Run the script - it will automatically discover and process the new country
-
-**Customizing the script:**
-- Add new ISO3 → country name mappings in the `$countryNames` hashtable
-- Comment out the `sources-scan` step if your source JSON files are already prepared
-- Adjust error handling or add custom logic as needed
-
-### 7. Run Tests
+### 5. Run tests
 
 ```bash
 pytest -q
 ```
 
-## Security
+---
 
-**⚠️ NEVER commit API keys or secrets to git**
+## Jobs Overview
 
-- **`.env` files are optional** but MUST be in `.gitignore` if used
-- Use environment variables for secrets (recommended)
-- The `.gitignore` already excludes common secret files (`.env`, credentials, etc.)
-- Generated outputs (`outputs/`, `*.json`) are excluded from git
+| Job ID | Description | Output formats | Mode |
+|--------|-------------|----------------|------|
+| `domain_lessons_option_b` | 10-category HRH evidence extraction → 10-column lean MENU + CITATIONS | json, xlsx | `llm_planned` |
+| `domain_solutions_from_evidence` | Solution extraction by HRH domain | json, xlsx | `llm` / `llm_planned` |
+| `phase1_discovery_qa` | Discovery Q&A for country assessment | json, md, docx | `llm` / `stub` |
+| `rrr_evidence_matrix` | RRR solutions evidence matrix | json, md, xlsx | `llm` / `stub` |
+| `table2_root_cause_mapping` | Root cause framework mapping | json, md, xlsx | `llm` / `stub` |
+| `table3_intervention_framework` | Integrated intervention framework | json, md, xlsx | `llm` / `stub` |
+| `benchmark_country_scoring` | Benchmark country scoring | json, md, xlsx | `llm` / `stub` |
+| `country_learning_briefs` | Country learning domain briefs | json, md, docx | `llm` / `stub` |
 
-## Available Jobs
+The primary production job is **`domain_lessons_option_b`** with `--mode llm_planned`. All other jobs use `--mode llm` or `--mode stub`.
 
-| Job ID | Type | Description | Render Formats |
-|--------|------|-------------|----------------|
-| `phase1_discovery_qa` | Narrative | Discovery Q&A for country assessment | md, docx |
-| `rrr_evidence_matrix` | Table | RRR evidence matrix for solutions | md, xlsx |
-| `table2_root_cause_mapping` | Table | Root cause framework mapping | md, xlsx |
-| `table3_intervention_framework` | Table | Integrated intervention framework | md, xlsx |
-| `benchmark_country_scoring` | Table | Benchmark country scoring | md, xlsx |
-| `country_learning_briefs` | Narrative | Country learning domain briefs | md, docx |
+---
 
-## Command Examples
+## Domain Lessons Extraction Pipeline
 
-### Phase 1 Discovery Q&A
+`domain_lessons_option_b` is the most complex job. It runs a multi-stage planned extraction pipeline:
 
-**Stub mode (no LLM):**
-```bash
-python -m app.app run --job phase1_discovery_qa --mode stub --spec-id test_spec --country-name Ethiopia --country-iso3 ETH
-```
+### Extraction modes
 
-**LLM mode:**
-```bash
-python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH
-```
+| Mode | Description |
+|------|-------------|
+| `stub` | Returns synthetic hardcoded output. No LLM or source files needed. |
+| `llm` | Single LLM call with all provided source excerpts. |
+| `llm_planned` | Multi-stage pipeline: planner → batched extractor → expansion sweep → delta sweep → merge. |
 
-**Render:**
-```bash
-python -m app.app render-md --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json
-python -m app.app render-docx --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json
-```
-
-### RRR Evidence Matrix
-
-**Stub mode:**
-```bash
-python -m app.app run --job rrr_evidence_matrix --mode stub --spec-id rrr_test
-```
-
-**LLM mode:**
-```bash
-python -m app.app run --job rrr_evidence_matrix --mode llm --spec-id rrr_resource_constrained_v1
-```
-
-**Render:**
-```bash
-python -m app.app render-md --job rrr_evidence_matrix --file outputs/rrr_evidence_matrix/output_llm.json
-python -m app.app render-xlsx --job rrr_evidence_matrix --file outputs/rrr_evidence_matrix/output_llm.json
-```
-
-### Table 2: Root Cause Mapping
-
-**Stub mode:**
-```bash
-python -m app.app run --job table2_root_cause_mapping --mode stub --spec-id table2_test
-```
-
-**LLM mode:**
-```bash
-python -m app.app run --job table2_root_cause_mapping --mode llm --spec-id table2_framework_v1
-```
-
-**Render:**
-```bash
-python -m app.app render-md --job table2_root_cause_mapping --file outputs/table2_root_cause_mapping/output_llm.json
-python -m app.app render-xlsx --job table2_root_cause_mapping --file outputs/table2_root_cause_mapping/output_llm.json
-```
-
-### Table 3: Intervention Framework
-
-**Stub mode:**
-```bash
-python -m app.app run --job table3_intervention_framework --mode stub --spec-id table3_test
-```
-
-**LLM mode:**
-```bash
-python -m app.app run --job table3_intervention_framework --mode llm --spec-id table3_interventions_v1
-```
-
-**Render:**
-```bash
-python -m app.app render-md --job table3_intervention_framework --file outputs/table3_intervention_framework/output_llm.json
-python -m app.app render-xlsx --job table3_intervention_framework --file outputs/table3_intervention_framework/output_llm.json
-```
-
-### Benchmark Country Scoring
-
-**Stub mode:**
-```bash
-python -m app.app run --job benchmark_country_scoring --mode stub --spec-id benchmark_test
-```
-
-**LLM mode:**
-```bash
-python -m app.app run --job benchmark_country_scoring --mode llm --spec-id benchmark_countries_v1
-```
-
-**Render:**
-```bash
-python -m app.app render-md --job benchmark_country_scoring --file outputs/benchmark_country_scoring/output_llm.json
-python -m app.app render-xlsx --job benchmark_country_scoring --file outputs/benchmark_country_scoring/output_llm.json
-```
-
-### Country Learning Briefs
-
-**Stub mode:**
-```bash
-python -m app.app run --job country_learning_briefs --mode stub --spec-id learning_test --country-name Ethiopia --country-iso3 ETH
-```
-
-**LLM mode:**
-```bash
-python -m app.app run --job country_learning_briefs --mode llm --spec-id learning_domains_v1 --country-name Ethiopia --country-iso3 ETH
-```
-
-**Render:**
-```bash
-python -m app.app render-md --job country_learning_briefs --file outputs/country_learning_briefs/output_llm.json
-python -m app.app render-docx --job country_learning_briefs --file outputs/country_learning_briefs/output_llm.json
-```
-
-## Validate Existing Output
-
-```bash
-python -m app.app validate --job phase1_discovery_qa --file outputs/phase1_discovery_qa/output_llm.json
-```
-
-## Project Structure
+### llm_planned pipeline stages
 
 ```
-hrh_app/
-├── app/
-│   ├── analyze/          # LLM integration
-│   ├── core/             # Schema validation
-│   ├── jobs/             # Job registry and execution
-│   └── render/           # Output renderers (md, xlsx, docx)
-├── configs/              # Job configurations
-├── data/                 # Reference data
-├── outputs/              # Generated outputs (gitignored)
-├── prompts/              # LLM prompt templates
-├── schemas/              # JSON schemas
-├── specs/                # Job specifications
-├── tests/                # Test suite
-├── pyproject.toml        # Dependencies
-└── README.md             # This file
+Stage 1 — Planner
+  Reads all source excerpts and assigns locators to extraction batches.
+  Groups by source document; up to 10 excerpts per batch.
+
+Stage 1.5 — Keyword enforcement (optional)
+  Checks batches against keyword families (supervision, incentives, etc.)
+  Ensures evidence-rich excerpts are included.
+
+Stage 2 — Batched extractor
+  For each batch: calls LLM with the rendered prompt + batch excerpts.
+  Validates output against domain_lessons_option_b.schema.json.
+  Schema failures trigger up to 3 repair attempts with error feedback.
+
+Stage 2.5 — Expansion sweep (auto-triggered)
+  If fewer than 5 locators cited after extraction AND batch has ≥8 locators,
+  runs a second LLM call on the same batch with an expansion suffix prompt.
+
+Stage 3 — Locator delta sweep (auto-triggered)
+  If cited locators < min(5, ceil(total * 0.5)) after expansion,
+  runs targeted single-locator LLM calls for uncited excerpts.
+  Prioritises locators with the most keyword-family hits.
+  Capped at 6 delta calls per batch.
+
+Stage 4 — Merge
+  Merges all batch payloads (original + expansion + delta) into one output.
+  Deduplication key: normalised(title) + evidence_type.
+  Citations merged and capped at 5 per item.
+  Intervention IDs assigned deterministically after merge.
 ```
 
-## Citation Formats
+### Coverage logging
 
-The app supports multiple citation types to accommodate various source materials:
-
-**Web sources:**
-```json
-{
-  "source_title": "WHO Health Report 2024",
-  "locator": "Chapter 3, page 45",
-  "source_url": "https://www.who.int/reports/2024"
-}
+Every batch emits coverage log lines:
+```
+[COVERAGE] batch 1: 4/8 locators cited after extraction
+[EXPANSION] batch 1: 4 cited / 8 available — running expansion sweep...
+[COVERAGE] batch 1: 6/8 locators cited after expansion
+[DELTA SWEEP] batch 1: cited=6 < threshold=4; sweeping 2/2 uncited locators
+[DELTA SWEEP] batch 1: swept 2; ~3 items added; newly cited: ['p.12', 'p.15']
+[COVERAGE] batch 1: 8/8 locators cited FINAL
 ```
 
-**Books:**
-```json
-{
-  "source_title": "Health Systems in Low-Income Countries",
-  "locator": "Chapter 7, pages 123-125",
-  "isbn": "978-0-123456-78-9",
-  "authors": "Smith, J. and Jones, A.",
-  "publisher": "Oxford University Press"
-}
+### Running domain_lessons_option_b
+
+```powershell
+# Global sources (production)
+python -m app.app run `
+  --job domain_lessons_option_b `
+  --mode llm_planned `
+  --spec-id domain_lessons_option_b_v2 `
+  --country-name "Global" `
+  --sources data/sources/global_sources.json
+
+# Ethiopia sources
+python -m app.app run `
+  --job domain_lessons_option_b `
+  --mode llm_planned `
+  --spec-id domain_lessons_option_b_v2 `
+  --country-name "Ethiopia" `
+  --country-iso3 ETH `
+  --sources data/sources/eth_sources.json
+
+# Render Excel MENU output
+python -m app.app render-xlsx `
+  --job domain_lessons_option_b `
+  --file outputs/domain_lessons_option_b/ETH_20260320_120000/output_llm_planned.json
 ```
 
-**Grey literature/reports:**
-```json
-{
-  "source_title": "Ethiopia National Health Workforce Assessment",
-  "locator": "Section 4.2",
-  "reference": "Ministry of Health, Ethiopia (2023). National Health Workforce Assessment Report."
-}
-```
+### MENU output (Excel)
 
-**Academic papers:**
-```json
-{
-  "source_title": "Impact of Task Shifting on Healthcare Quality",
-  "locator": "Results section",
-  "doi": "10.1016/j.healthpol.2024.01.234"
-}
-```
+The rendered XLSX contains two sheets:
 
-Every citation **must** include at least one identifier: `source_url`, `reference`, `doi`, or `isbn`.
+**MENU sheet — 10-column lean sheet; one row per proven intervention or recommendation:**
 
-## Curated Sources (Grounded Generation)
+| # | Column | Source |
+|---|--------|--------|
+| 1 | Intervention ID | Computed at render time: `{d_id[:3]}_{fa_id[:6]}_{status_abbrev}_{n:03d}` |
+| 2 | Title | `item.title` |
+| 3 | HRH-II Package Component | `domain_id → focus_area_id` |
+| 4 | Description | `item.statement` |
+| 5 | Evidence status | `proven` (from `proven_interventions`) or `recommendation_only` (from `recommendations`) |
+| 6 | Strength of evidence | `item.evidence_strength` |
+| 7 | Evidence design/type | `item.evidence_design_type` (default: `"unknown"`) |
+| 8 | Target cadre & setting | `item.target_cadre_setting` (default: `"unspecified"`) |
+| 9 | Implementation considerations | `item.intervention_risks` bullet list (item-anchored only) |
+| 10 | Expected impact | `item.expected_impact` (fallback: `"Observed: {statement}"` or `"Intended to: {statement}"`) |
 
-For better citation quality and grounding, you can provide a curated JSON file of trusted sources with snippets. The LLM will receive these as "ALLOWED SOURCES" in the prompt.
+**CITATIONS sheet — one row per citation from MENU rows (5 columns):**
+`Intervention ID | doc_id | source_title | locator | snippet`
 
-**Create a sources file** (e.g., `data/sources/ethiopia_sources.json`):
+**MENU eligibility rules:**
+- Only `proven_interventions` and `recommendations` produce MENU rows
+- Items with `evidence_type = determinant_mechanism` are excluded even if in `proven_interventions`
+- Every MENU row must have ≥1 citation
+- Evidence status is derived from the source category array, not the `evidence_type` field
+
+---
+
+## Sources and RAG
+
+### Sources JSON format
+
+The `--sources` flag points to a JSON file that lists source documents with pre-extracted snippets. This grounds the extraction — the LLM can only cite documents in this list.
+
 ```json
 {
   "sources": [
@@ -497,11 +219,10 @@ For better citation quality and grounding, you can provide a curated JSON file o
       "source_title": "Ethiopia Health Sector Transformation Plan II",
       "reference": "Federal Ministry of Health (Ethiopia). HSTP II, 2020/21–2024/25.",
       "published_date": "2021-01-01",
-      "locator_hint": "HRH chapter / performance management sections",
       "snippets": [
         {
-          "locator": "HRH section",
-          "quote": "Your trusted excerpt from the document..."
+          "locator": "Section 4.2, p. 45",
+          "text": "Exact text from the document..."
         }
       ]
     }
@@ -509,111 +230,245 @@ For better citation quality and grounding, you can provide a curated JSON file o
 }
 ```
 
-**Use with any job:**
+### Auto-generate sources from PDF/DOCX files
+
 ```bash
-python -m app.app run --job phase1_discovery_qa --mode llm --spec-id phase1_ethiopia_v1 --country-name Ethiopia --country-iso3 ETH --sources data/sources/ethiopia_sources.json
+# Scan PDF/DOCX files in data/sources/ETH/
+python -m app.app sources-scan --country-iso3 ETH
+# → writes data/sources/eth_sources.json
+
+# Or scan without text extraction (metadata only)
+python -m app.app sources-scan --country-iso3 ETH --no-extract
 ```
 
-**Benefits:**
-- ✅ Manual curation ensures quality sources
-- ✅ LLM sees relevant context without vector search complexity
-- ✅ Citations can reference your trusted sources
-- ✅ No need for embeddings or vector databases (yet)
+### Build a vector search index (RAG)
 
-**Source ID Enforcement:**
-
-When you use the `--sources` flag, the app automatically enforces that all citations include a `source_id` field and that the ID matches one from your curated sources. This ensures:
-- Citations are grounded in your trusted sources
-- No hallucinated or invalid source references
-- Full traceability from claims to source documents
-
-The LLM receives an instruction to include `source_id` in citations, and validation will fail if:
-- A citation is missing the `source_id` field
-- A `source_id` doesn't match any ID in your sources file (e.g., SRC1, SRC2, etc.)
-
-Example citation with source_id:
-```json
-{
-  "source_id": "SRC1",
-  "source_title": "Ethiopia Health Sector Transformation Plan II",
-  "locator": "HRH section, page 45",
-  "reference": "Federal Ministry of Health (Ethiopia). HSTP II, 2020/21–2024/25."
-}
+```bash
+python -m app.app sources-index \
+  --sources data/sources/eth_sources.json \
+  --output data/sources/eth_index.json
 ```
 
-### Auto-Generate Sources from Files
+The RAG index is used in `llm` mode to retrieve the most relevant excerpts per query before each LLM call. In `llm_planned` mode the planner assigns excerpts directly.
 
-The `sources-scan` command automatically creates a sources JSON file by scanning PDF and DOCX files in country-specific directories:
+---
 
-**1. Organize your source files:**
+## Rendering Outputs
+
+All render commands accept `--file` (path to JSON output) and optional `--out` (output path).
+
+```bash
+# Markdown
+python -m app.app render-md \
+  --job domain_lessons_option_b \
+  --file outputs/domain_lessons_option_b/ETH_20260320_120000/output_llm_planned.json
+
+# Excel
+python -m app.app render-xlsx \
+  --job domain_lessons_option_b \
+  --file outputs/domain_lessons_option_b/ETH_20260320_120000/output_llm_planned.json
+
+# Word
+python -m app.app render-docx \
+  --job phase1_discovery_qa \
+  --file outputs/phase1_discovery_qa/ETH_20260320_120000/output_llm.json
+
+# Render all formats for all jobs at once
+python -m app.app render-all --mode llm --country-name Ethiopia --country-iso3 ETH
+```
+
+---
+
+## Multi-Country Batch Analysis
+
+### PowerShell batch script
+
+```powershell
+.\run_all_countries.ps1
+```
+
+The script auto-discovers all ISO3 country folders under `data/sources/`, generates sources JSON files, runs all jobs with LLM, and renders all outputs. No configuration needed — just add a new `data/sources/{ISO3}/` folder.
+
+**Folder layout required:**
 ```
 data/sources/
-└── ETH/
-    ├── pdf/
-    │   ├── Ethiopia Health Sector Transformation Plan II.pdf
-    │   └── HRH Strategic Plan 2016-2025.pdf
-    └── docx/
-        └── Health Extension Program Evaluation.docx
+├── ETH/
+│   ├── pdf/
+│   └── docx/
+├── KEN/
+│   ├── pdf/
+│   └── docx/
 ```
 
-**2. Run the scan command:**
-```bash
-python -m app.app sources-scan --country-iso3 ETH
+**Output structure:**
+```
+outputs/
+  domain_lessons_option_b/
+    ETH_20260320_120000/
+      output_llm_planned.json
+      output_llm_planned.xlsx
+    KEN_20260320_130000/
+      output_llm_planned.json
+      output_llm_planned.xlsx
 ```
 
-**3. Output:**
+---
+
+## Environment Variables
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `HRH_LLM_PROVIDER` | Must be `openai` |
+| `OPENAI_API_KEY` | OpenAI API key |
+
+### Model
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HRH_OPENAI_MODEL` | `gpt-4o` | OpenAI model for extraction |
+
+### Rate limiting and retries
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HRH_RL_BACKOFF_BASE_SECONDS` | `1.0` | Base backoff on 429 RateLimitError |
+| `HRH_RL_BACKOFF_MAX_SECONDS` | `30.0` | Max backoff cap |
+| `HRH_RL_JITTER_SECONDS` | `1.0` | Random jitter added to backoff |
+| `HRH_RL_MAX_RETRIES` | `5` | Max retry attempts per LLM call |
+| `HRH_SOFT_RPS` | _(disabled)_ | Soft request-per-second limit (pre-call sleep) |
+
+Sleeps only occur on actual 429/connection errors. Successful calls never sleep.
+
+### Extraction tuning (llm_planned mode)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HRH_MAX_EXCERPTS_PER_CALL` | `10` | Max excerpt snippets per extractor batch |
+| `HRH_MAX_CHARS_PER_CALL` | `16000` | Max total chars per extractor batch |
+| `HRH_MAX_EXTRACT_BATCHES_PER_SOURCE` | `10` | Max extraction batches per source document |
+| `HRH_MAX_DELTA_CALLS_PER_SOURCE` | `6` | Max locator delta sweep calls per batch |
+| `HRH_SKIP_EXPANSION_WHEN_DELTA` | `1` | Skip expansion pass if delta sweep will run |
+
+### RAG retrieval
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HRH_RAG_TOP_K` | `40` | Number of excerpts retrieved per RAG query |
+
+### Validation
+
+| Variable | Description |
+|----------|-------------|
+| `HRH_STRICT_CITATIONS` | `1` = require source_url / doi / isbn / reference on every citation |
+| `HRH_ENFORCE_ALLOWED_SOURCES` | Auto-set when `--sources` used. Requires `source_id` on all citations |
+| `HRH_ALLOWED_SOURCE_IDS` | Comma-separated list of valid source IDs (auto-set from sources file) |
+
+---
+
+## CLI Reference
+
 ```
-Scanned 3 file(s)
-Wrote: data/sources/eth_sources.json
+python -m app.app <command> [options]
 ```
 
-The generated JSON includes:
-- `source_id`: Auto-numbered (SRC1, SRC2, etc.)
-- `source_title`: Extracted from filename
-- `source_type`: pdf or docx
-- `file_path`: Relative path to the file
-- `reference`: Auto-generated (editable)
-- `snippets`: Empty array (add manually or via future extraction tools)
+| Command | Key options | Purpose |
+|---------|------------|---------|
+| `run` | `--job`, `--mode`, `--spec-id`, `--country-name`, `--country-iso3`, `--sources`, `--index` | Run one job |
+| `run-all` | `--mode`, `--spec-id`, `--country-name`, `--country-iso3`, `--sources` | Run all jobs |
+| `render-md` | `--job`, `--file`, `--out` | Render JSON → Markdown |
+| `render-xlsx` | `--job`, `--file`, `--out` | Render JSON → Excel |
+| `render-docx` | `--job`, `--file`, `--out` | Render JSON → Word |
+| `render-all` | `--mode`, `--country-name`, `--country-iso3` | Render all jobs |
+| `validate` | `--job`, `--file` | Validate JSON against schema |
+| `sources-scan` | `--country-iso3`, `--no-extract` | Scan PDF/DOCX → sources JSON |
+| `sources-index` | `--sources`, `--output` | Build RAG embedding index |
 
-**Next steps:**
-1. Edit the generated JSON to improve `reference` fields
-2. Add `published_date` and other optional fields
-3. Manually add `snippets` with relevant quotes (or use future extraction tools)
-4. Use with `--sources` flag when running jobs
+---
+
+## Output Folder Structure
+
+```
+outputs/
+  {job_id}/
+    {COUNTRY}_{TIMESTAMP}/
+      output_{mode}.json
+      output_{mode}.md
+      output_{mode}.xlsx
+      output_{mode}.docx
+```
+
+- `COUNTRY`: ISO3 code (ETH) or country name (Ethiopia) or `run` if unspecified
+- `TIMESTAMP`: UTC datetime `YYYYMMDD_HHMMSS`
+- `mode`: `llm`, `llm_planned`, or `stub`
+
+---
+
+## Project Structure
+
+```
+hrh_app/
+├── app/
+│   ├── app.py                  # CLI entry point + all pipeline orchestration
+│   ├── analyze/
+│   │   ├── llm.py              # OpenAI integration + adaptive rate limiting
+│   │   ├── prompting.py        # Prompt template rendering
+│   │   ├── extractors.py       # Spec parsers per job type
+│   │   ├── merger.py           # Multi-batch output merging + deduplication
+│   │   └── runner.py           # Orchestration helpers
+│   ├── core/
+│   │   └── validators.py       # JSON schema + semantic validation
+│   ├── ingest/
+│   │   ├── loader.py           # PDF/DOCX text extraction
+│   │   ├── chunker.py          # Text chunking
+│   │   └── indexer.py          # Embedding index builder
+│   ├── jobs/
+│   │   ├── registry.py         # Job registry loader
+│   │   └── *_stub_runner.py    # Synthetic stub data per job
+│   └── render/
+│       ├── md.py               # Markdown renderer
+│       ├── xlsx.py             # Excel renderer
+│       └── docx.py             # Word renderer
+├── configs/
+│   └── job_registry.yaml       # Job definitions (spec, prompt, schema, output paths)
+├── data/sources/               # Source documents (PDF/DOCX) and generated manifests
+├── docs/                       # Architecture, specifications, and data model docs
+├── outputs/                    # Generated outputs (gitignored)
+├── prompts/                    # LLM prompt templates (Markdown)
+├── schemas/                    # JSON output validation schemas
+├── specs/                      # Job extraction specifications
+├── tests/                      # pytest test suite (329 tests)
+├── tools/
+│   ├── comparator_index.py     # Country similarity scoring
+│   └── similarity_index.py     # Simplified similarity index
+├── pyproject.toml
+├── run_all_countries.ps1       # Multi-country PowerShell batch script
+└── README.md
+```
+
+---
 
 ## Development
 
-**Run tests with coverage:**
 ```bash
+# Run all tests
+pytest -q
+
+# Run with coverage
 pytest --cov=app --cov-report=term-missing
-```
 
-**Type checking (if using mypy):**
-```bash
+# Run specific test file
+pytest tests/test_domain_lessons_option_b_schema.py -q
+
+# Type check
 mypy app/
-```
 
-**Linting:**
-```bash
+# Lint
 ruff check app/
 ```
 
-## License
-
-[Add license information]
-
-## Contact
-
-[Add contact information]
-
-## Latest to run extraction:
-
-python -m app.app run --job domain_lessons_option_b --mode llm_planned `
-  --spec-id domain_lessons_option_b_v1 `
-  --country-name "global_test" `
-  --sources data/sources/global_test_sources.json
-
-
-py -3.12 -m app.app render-xlsx `
-  --job domain_lessons_option_b `
-  --file outputs/domain_lessons_option_b/GLOBAL_TEST_20260303_215351/output_llm_planned.json
+**Detailed documentation:**
+- [docs/architecture.md](docs/architecture.md) — system architecture, pipeline stages, design decisions
+- [docs/specifications.md](docs/specifications.md) — job specifications and extraction rules
+- [docs/datamodel.md](docs/datamodel.md) — JSON schema data model, field definitions, MENU columns

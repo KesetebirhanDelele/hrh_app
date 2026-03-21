@@ -1,0 +1,128 @@
+{
+  "spec_id": "domain_lessons_option_b_v2",
+  "spec_type": "domain_lessons_extraction",
+  "version": "v2",
+  "description": "Extract structured HRH evidence per learning domain and focus area, categorised into ten evidence buckets. Evidence is discovered from source documents only — no pre-seeded list is used. Every extracted item must have at least one verbatim citation from the provided excerpts. The MENU output contains only proven_interventions and recommendations rows.",
+  "extraction_requirements": {
+    "require_citations_per_item": true,
+    "min_citations_per_item": 1,
+    "if_no_citations_then": "omit_item",
+    "deduplicate_within_focus_area": true,
+    "source_title_must_come_from_inputs": true
+  },
+  "menu_row_eligibility": {
+    "menu_categories": ["proven_interventions", "recommendations"],
+    "non_menu_categories": [
+      "lessons_learnt",
+      "prerequisites",
+      "operational_barriers",
+      "governance_process_dependencies",
+      "evidence_gaps_uncertainty",
+      "costs_resource_intensity",
+      "equity_implications",
+      "consequences_impacts"
+    ],
+    "note": "Non-menu categories remain in JSON for evidence base but never produce MENU rows."
+  },
+  "categories": {
+    "proven_interventions": {
+      "definition": "Implemented actions, practices, or tools with directly observed effects or validated performance impact on HRH outcomes. Must describe an action — NOT a determinant, constraint, or barrier.",
+      "allowed_evidence_types": ["intervention_effect", "validated_tool_or_metric"],
+      "evidence_rule": "Requires at least one citation with an observed or measured outcome, or a validation study result. Do NOT include items that only describe a problem or barrier.",
+      "menu_eligible": true
+    },
+    "lessons_learnt": {
+      "definition": "Empirically observed implementation lessons or mechanistic insights about what worked, what did not, and why. Descriptive factual statements — NOT normative 'should' statements.",
+      "allowed_evidence_types": ["determinant_mechanism", "intervention_effect"],
+      "evidence_rule": "Must be an observed finding derived from the cited text. Do not include recommendations or policy advice here.",
+      "menu_eligible": false
+    },
+    "recommendations": {
+      "definition": "Normative statements explicitly labeled as recommendations, guidelines, or policy advice in the source text. Typically contain 'should', 'ought to', 'is recommended', or similar language.",
+      "allowed_evidence_types": ["recommendation_only"],
+      "evidence_rule": "Must cite the source passage that contains the explicit recommendation language.",
+      "menu_eligible": true
+    },
+    "prerequisites": {
+      "definition": "Enabling conditions that the source text explicitly states are required for an intervention or system function to work (e.g., staffing thresholds, infrastructure, financing, policy mandate).",
+      "allowed_evidence_types": ["determinant_mechanism", "intervention_effect"],
+      "evidence_rule": "Must be stated as a precondition in the cited text. Do not infer prerequisites not mentioned.",
+      "menu_eligible": false
+    },
+    "operational_barriers": {
+      "definition": "Factors explicitly described in the source text as commonly impeding or breaking implementation (e.g., supply chain gaps, staff turnover, infrequent supervision, low pay).",
+      "allowed_evidence_types": ["determinant_mechanism", "intervention_effect"],
+      "evidence_rule": "Must be described as an observed or reported barrier in the cited text using barrier framing language: 'lack of', 'lacking', 'without', 'absence of', 'no access', 'insufficient', 'inadequate', 'barrier', 'constraint', 'difficulty', 'hurdle', 'challenge', 'shortage'. Do not include hypothetical barriers or statistical associations without explicit barrier framing.",
+      "menu_eligible": false
+    },
+    "governance_process_dependencies": {
+      "definition": "Who does what, using what data or tools, and at what cadence — process and governance dependencies required for the system or intervention to function (e.g., monthly HRHIS reporting by district managers, quarterly review meetings).",
+      "allowed_evidence_types": ["determinant_mechanism", "validated_tool_or_metric"],
+      "evidence_rule": "Must specify actor, action, and cadence where available in the cited text.",
+      "menu_eligible": false
+    },
+    "evidence_gaps_uncertainty": {
+      "definition": "Explicit statements in the source text about thin, absent, or contradictory evidence for a topic area.",
+      "allowed_evidence_types": ["determinant_mechanism", "recommendation_only"],
+      "evidence_rule": "Must cite the source passage that acknowledges the gap. Do not assert gaps based on model inference.",
+      "menu_eligible": false
+    },
+    "costs_resource_intensity": {
+      "definition": "Cost levels or resource-intensity characterisation of an intervention or practice, with textual justification from the source. Intensity must be assigned as low/medium/high/unknown with supporting rationale.",
+      "intensity_enum": ["low", "medium", "high", "unknown"],
+      "evidence_rule": "Must cite the source text that provides cost or resource-intensity data or characterisation.",
+      "menu_eligible": false
+    },
+    "equity_implications": {
+      "definition": "Explicit distributional impacts described in the source text — rural/urban divides, gender differences, cadre disparities, or other population-group effects on access, performance, or outcomes.",
+      "allowed_evidence_types": ["determinant_mechanism", "intervention_effect"],
+      "evidence_rule": "Must cite text that names the affected population group and the distributional difference. Do not infer equity implications not stated.",
+      "menu_eligible": false
+    },
+    "consequences_impacts": {
+      "definition": "Explicit downstream outcomes or impacts described in the source — effects on patients, communities, staff, or the health system that result from absenteeism, poor HRH management, or HRH system failures (e.g., delayed access to care, workload transfers to present staff, increased patient costs, reduced service quality, unauthorised task shifting).",
+      "allowed_evidence_types": ["determinant_mechanism"],
+      "evidence_rule": "Must cite text that describes a downstream effect of an HRH failure using impact framing language: 'resulted in', 'led to', 'delayed', 'increased workload', 'overwhelmed', 'reduced quality'. Do NOT place consequences in operational_barriers — barriers impede implementation; consequences are downstream outcomes.",
+      "menu_eligible": false
+    }
+  },
+  "domains": [
+    {
+      "domain_id": "accountability",
+      "domain_label": "Accountability",
+      "focus_areas": [
+        { "focus_area_id": "supervision_models",                    "label": "Supervision Models" },
+        { "focus_area_id": "performance_contracts",                 "label": "Performance Contracts" },
+        { "focus_area_id": "community_or_social_accountability",    "label": "Community or Social Accountability" },
+        { "focus_area_id": "enforcement_mechanisms",                "label": "Enforcement Mechanisms" }
+      ]
+    },
+    {
+      "domain_id": "absenteeism",
+      "domain_label": "Absenteeism",
+      "focus_areas": [
+        { "focus_area_id": "measurement_approaches",                         "label": "Measurement Approaches" },
+        { "focus_area_id": "incentives_and_sanctions",                       "label": "Incentives and Sanctions" },
+        { "focus_area_id": "deployment_housing_safety_workload_factors",     "label": "Deployment, Housing, Safety and Workload Factors" }
+      ]
+    },
+    {
+      "domain_id": "productivity",
+      "domain_label": "Productivity",
+      "focus_areas": [
+        { "focus_area_id": "task_design_and_task_shifting",   "label": "Task Design and Task Shifting" },
+        { "focus_area_id": "time_use_optimization",           "label": "Time Use Optimization" },
+        { "focus_area_id": "digital_or_managerial_enablers",  "label": "Digital or Managerial Enablers" }
+      ]
+    },
+    {
+      "domain_id": "system_enablers",
+      "domain_label": "System Enablers",
+      "focus_areas": [
+        { "focus_area_id": "governance_arrangements",               "label": "Governance Arrangements" },
+        { "focus_area_id": "financing_and_incentives",              "label": "Financing and Incentives" },
+        { "focus_area_id": "political_economy_considerations",      "label": "Political Economy Considerations" }
+      ]
+    }
+  ]
+}

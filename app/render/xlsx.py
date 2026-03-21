@@ -223,102 +223,128 @@ def render_xlsx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
         return out_path
 
     elif job_id == "domain_lessons_option_b":
-        _ITEM_CATS = (
-            "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
-            "operational_barriers", "governance_process_dependencies",
-            "evidence_gaps_uncertainty", "equity_implications", "consequences_impacts",
-        )
-        _COST_CAT = "costs_resource_intensity"
+        # MENU rows = ONLY proven_interventions + recommendations (implementable solutions).
+        # All other categories remain in JSON for the evidence base but are NOT MENU rows.
+        _MENU_CATS = ("proven_interventions", "recommendations")
 
-        # Sheet 1: items — one row per Item across all 8 Item categories
-        ws.title = "items"
-        _write_header(ws, [
-            "domain_id", "focus_area_id", "category", "item_id", "title",
-            "evidence_type", "evidence_strength", "statement", "mechanism",
-            "applicable_countries", "citations",
-        ])
+        # Category → evidence_status label (derived from the source array, not evidence_type).
+        _CAT_STATUS: Dict[str, str] = {
+            "proven_interventions": "proven",
+            "recommendations":      "recommendation_only",
+        }
+
+        def _expected_impact_fallback(item: Dict[str, Any], ev_status: str) -> str:
+            """Derive expected_impact from statement when the dedicated field is absent."""
+            stmt = item.get("statement", "").strip()
+            if not stmt:
+                return ""
+            if ev_status == "proven":
+                return f"Observed: {stmt}"
+            return f"Intended to: {stmt}"
+
+        def _menu_row(
+            item: Dict[str, Any], d_id: str, fa_id: str, cat: str,
+            iid: str, ev_status: str,
+        ) -> List:
+            # Col 9: implementation considerations — intervention_risks ONLY (not fa-level agg).
+            risks_list = item.get("intervention_risks") or []
+            impl_considerations = "\n".join(f"• {r}" for r in risks_list)
+
+            # Col 10: expected impact — item field with minimal fallback.
+            exp_impact = (item.get("expected_impact") or "").strip()
+            if not exp_impact:
+                exp_impact = _expected_impact_fallback(item, ev_status)
+
+            row: List = [""] * 10
+            row[0] = iid
+            row[1] = item.get("title", "")
+            row[2] = f"{d_id} → {fa_id}"                             # HRH-II Package Component
+            row[3] = item.get("statement", "")                        # Description (core components)
+            row[4] = ev_status                                        # Evidence status
+            row[5] = item.get("evidence_strength") or ""              # Strength of evidence
+            row[6] = item.get("evidence_design_type") or "unknown"    # Evidence design/type
+            row[7] = item.get("target_cadre_setting") or "unspecified"# Target cadre & setting
+            row[8] = impl_considerations                              # Implementation considerations
+            row[9] = exp_impact                                       # Expected impact
+            return row
+
+        # Sheet 1: MENU — exactly 10 columns
+        ws.title = "MENU"
+        _MENU_HEADERS = [
+            "Intervention ID",              # 1
+            "Title",                        # 2
+            "HRH-II Package Component",     # 3  domain → focus_area
+            "Description",                  # 4  item.statement
+            "Evidence status",              # 5  proven | recommendation_only
+            "Strength of evidence",         # 6  strong | moderate | weak
+            "Evidence design/type",         # 7  item.evidence_design_type or "unknown"
+            "Target cadre & setting",       # 8  item.target_cadre_setting or "unspecified"
+            "Implementation considerations",# 9  item.intervention_risks bullets (intervention-anchored)
+            "Expected impact",              # 10 item.expected_impact or derived fallback
+        ]
+        _write_header(ws, _MENU_HEADERS)
+
+        # Compute Intervention ID deterministically at render time:
+        # derived from (domain_id, focus_area_id, evidence_status, counter).
+        _iid_counter: Dict[tuple, int] = {}
+
         for domain in payload.get("domains", []):
             d_id = domain.get("domain_id", "")
             for fa in domain.get("focus_areas", []):
                 fa_id = fa.get("focus_area_id", "")
-                for cat in _ITEM_CATS:
+                for cat in _MENU_CATS:
                     for item in fa.get(cat, []):
-                        cit_lines = "\n".join(
-                            f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
-                            for c in item.get("citations", [])
-                        )
-                        countries = ", ".join(item.get("applicable_countries") or [])
-                        ws.append([
-                            d_id, fa_id, cat,
-                            item.get("item_id", ""),
-                            item.get("title", ""),
-                            item.get("evidence_type", ""),
-                            item.get("evidence_strength", ""),
-                            item.get("statement", ""),
-                            item.get("mechanism", "") or "",
-                            countries,
-                            cit_lines,
-                        ])
+                        # HARD RULE: determinant_mechanism items are NOT MENU rows
+                        if item.get("evidence_type") == "determinant_mechanism":
+                            continue
+                        ev_status = _CAT_STATUS[cat]
+                        _key = (d_id, fa_id, ev_status)
+                        _iid_counter[_key] = _iid_counter.get(_key, 0) + 1
+                        status_abbrev = "prv" if ev_status == "proven" else "rec"
+                        iid = f"{d_id[:3]}_{fa_id[:6]}_{status_abbrev}_{_iid_counter[_key]:03d}"
+                        ws.append(_menu_row(item, d_id, fa_id, cat, iid, ev_status))
+
         _autosize(ws)
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-        # Sheet 2: costs — one row per CostItem
-        ws2 = wb.create_sheet("costs")
+        # Sheet 2: CITATIONS — one row per citation, linked to MENU rows only (5 columns).
+        ws2 = wb.create_sheet("CITATIONS")
         _write_header(ws2, [
-            "domain_id", "focus_area_id", "item_id", "title",
-            "intensity", "cost_drivers", "statement", "applicable_countries", "citations",
+            "Intervention ID", "doc_id", "source_title", "locator", "snippet",
         ])
+
+        # Recompute IIDs using the same deterministic counter for CITATIONS linkage.
+        _iid_counter2: Dict[tuple, int] = {}
         for domain in payload.get("domains", []):
             d_id = domain.get("domain_id", "")
             for fa in domain.get("focus_areas", []):
                 fa_id = fa.get("focus_area_id", "")
-                for item in fa.get(_COST_CAT, []):
-                    cit_lines = "\n".join(
-                        f"{c.get('source_title') or c.get('doc_id', '')} | {c.get('locator', '')}"
-                        for c in item.get("citations", [])
-                    )
-                    countries = ", ".join(item.get("applicable_countries") or [])
-                    ws2.append([
-                        d_id, fa_id,
-                        item.get("item_id", ""),
-                        item.get("title", ""),
-                        item.get("intensity", ""),
-                        "; ".join(item.get("cost_drivers", []) or []),
-                        item.get("statement", ""),
-                        countries,
-                        cit_lines,
-                    ])
+                for cat in _MENU_CATS:
+                    for item in fa.get(cat, []):
+                        if item.get("evidence_type") == "determinant_mechanism":
+                            continue
+                        ev_status = _CAT_STATUS[cat]
+                        _key2 = (d_id, fa_id, ev_status)
+                        _iid_counter2[_key2] = _iid_counter2.get(_key2, 0) + 1
+                        status_abbrev = "prv" if ev_status == "proven" else "rec"
+                        iid = f"{d_id[:3]}_{fa_id[:6]}_{status_abbrev}_{_iid_counter2[_key2]:03d}"
+                        for cit in item.get("citations", []):
+                            snippet = cit.get("snippet", "")
+                            # Enforce ≤300 chars at word boundary for CITATIONS sheet
+                            if len(snippet) > 300:
+                                last_space = snippet[:300].rfind(" ")
+                                snippet = snippet[:last_space] if last_space > 0 else snippet[:300]
+                            ws2.append([
+                                iid,
+                                cit.get("doc_id", ""),
+                                cit.get("source_title", "") or cit.get("doc_id", ""),
+                                cit.get("locator", ""),
+                                snippet,
+                            ])
         _autosize(ws2)
         for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row, min_col=1, max_col=ws2.max_column):
-            for cell in row:
-                cell.alignment = Alignment(vertical="top", wrap_text=True)
-
-        # Sheet 3: citations — long format, one row per citation across all categories
-        ws3 = wb.create_sheet("citations")
-        _write_header(ws3, [
-            "domain_id", "focus_area_id", "category", "item_id", "title",
-            "source_title", "doc_id", "locator", "snippet",
-        ])
-        for domain in payload.get("domains", []):
-            d_id = domain.get("domain_id", "")
-            for fa in domain.get("focus_areas", []):
-                fa_id = fa.get("focus_area_id", "")
-                for cat in _ITEM_CATS + (_COST_CAT,):
-                    for item in fa.get(cat, []):
-                        for cit in item.get("citations", []):
-                            ws3.append([
-                                d_id, fa_id, cat,
-                                item.get("item_id", ""),
-                                item.get("title", ""),
-                                cit.get("source_title", "") or cit.get("doc_id", ""),
-                                cit.get("doc_id", ""),
-                                cit.get("locator", ""),
-                                cit.get("snippet", ""),
-                            ])
-        _autosize(ws3)
-        for row in ws3.iter_rows(min_row=2, max_row=ws3.max_row, min_col=1, max_col=ws3.max_column):
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
 

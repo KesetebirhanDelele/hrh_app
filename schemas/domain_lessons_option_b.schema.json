@@ -35,7 +35,16 @@
         "item_id":   { "$ref": "common.json#/$defs/NonEmptyString" },
         "title":     { "$ref": "common.json#/$defs/NonEmptyString" },
         "statement": { "$ref": "common.json#/$defs/NonEmptyString" },
-        "mechanism": { "type": "string" },
+        "mechanism":                { "type": "string" },
+        "evidence_summary":         { "type": "string" },
+        "evidence_design_type":     { "type": "string" },
+        "target_cadre_setting":     { "type": "string" },
+        "governance_operating_model": { "type": "string" },
+        "intervention_risks": {
+          "type": "array",
+          "items": { "$ref": "common.json#/$defs/NonEmptyString" }
+        },
+        "expected_impact":          { "type": "string" },
         "evidence_type": {
           "type": "string",
           "enum": [

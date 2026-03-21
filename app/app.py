@@ -152,17 +152,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 args.job, spec, country_name, country_iso3
             )
 
-            rag_delay = int(os.getenv("HRH_RAG_DELAY_SECS", "65"))
-            print(f"  Processing {len(items_with_queries)} items via RAG (delay={rag_delay}s between calls)...")
+            print(f"  Processing {len(items_with_queries)} items via RAG...")
             all_item_results: list[dict] = []
 
             for item_idx, (query_text, item_inputs) in enumerate(items_with_queries, 1):
-                # Pause between calls to respect TPM limits
-                if item_idx > 1 and rag_delay > 0:
-                    print(f"  Waiting {rag_delay}s for rate limit window...")
-                    import time
-                    time.sleep(rag_delay)
-
                 item_label = query_text[:60].replace("\n", " ")
                 print(f"  [{item_idx}/{len(items_with_queries)}] {item_label}...")
 
@@ -285,11 +278,6 @@ def cmd_run(args: argparse.Namespace) -> int:
             else:
                 partial_outputs.append(payload)
 
-            # Pause between per-source calls to respect TPM limits
-            if total_batches > 1 and batch_idx < total_batches:
-                delay = int(os.getenv("HRH_CALL_DELAY_SECS", "65"))
-                print(f"  Waiting {delay}s for rate limit window...")
-                time.sleep(delay)
 
         if not partial_outputs:
             print("No valid outputs produced.", file=sys.stderr)
@@ -372,8 +360,6 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         sources_by_id = {s.get("source_id", s.get("doc_id", "")): s for s in all_sources}
         sources_with_snippets = [s for s in all_sources if s.get("snippets")]
-        call_delay = int(os.getenv("HRH_CALL_DELAY_SECS", "65"))
-
         # ── Stage 1: Planner pass ──────────────────────────────────────────────
         print(f"  Planner pass: {len(sources_with_snippets)} source(s)...")
         all_plans: list[dict] = []
@@ -399,10 +385,6 @@ def cmd_run(args: argparse.Namespace) -> int:
 
             all_plans.extend(planner_payload.get("plans", []))
 
-            if src_idx < len(sources_with_snippets) and call_delay > 0:
-                print(f"  Waiting {call_delay}s for rate limit window...")
-                time.sleep(call_delay)
-
         if not all_plans:
             print("No plans produced by planner.", file=sys.stderr)
             return 3
@@ -419,22 +401,30 @@ def cmd_run(args: argparse.Namespace) -> int:
         # more excerpts per call means the extractor sees fuller context.
         _max_excerpts = int(os.getenv("HRH_MAX_EXCERPTS_PER_CALL", "10"))
         _max_chars = int(os.getenv("HRH_MAX_CHARS_PER_CALL", "16000"))
-        extraction_batches = _planner_to_batches(all_plans, sources_by_id, _max_excerpts, _max_chars)
+        _max_batches_per_source = int(os.getenv("HRH_MAX_EXTRACT_BATCHES_PER_SOURCE", "10"))
+        _max_delta_per_source = int(os.getenv("HRH_MAX_DELTA_CALLS_PER_SOURCE", "6"))
+        extraction_batches = _planner_to_batches(
+            all_plans, sources_by_id, _max_excerpts, _max_chars, _max_batches_per_source
+        )
         if not extraction_batches:
             print("No extraction batches from planner output.", file=sys.stderr)
             return 3
 
         print(f"  Extraction pass: {len(extraction_batches)} batch(es)...")
         partial_outputs: list[dict] = []
+        _delta_calls_used: dict[str, int] = {}  # source_id → delta calls consumed
+        _batch_durations: list[float] = []
 
         for batch_idx, batch in enumerate(extraction_batches, 1):
             src_name = (batch[0].get("source_title", "unknown")[:50] if batch else "unknown")
+            _batch_source_id = batch[0].get("source_id", "") if batch else ""
             batch_locators = [
                 snip.get("locator", "")
                 for src in batch
                 for snip in src.get("snippets", [])
             ]
             print(f"  Batch {batch_idx}/{len(extraction_batches)}: {src_name} ({len(batch_locators)} locators: {batch_locators})")
+            _batch_start = time.perf_counter()
 
             tmp_file = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", delete=False, encoding="utf-8"
@@ -492,9 +482,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                         f"  [EXPANSION] batch {batch_idx}: {_n_cited} cited / "
                         f"{len(batch_locators)} available — running expansion sweep..."
                     )
-                    if call_delay > 0:
-                        print(f"  Waiting {call_delay}s before expansion call...")
-                        time.sleep(call_delay)
                     exp_payload = _llm_call_with_retry(
                         rendered_prompt + _EXPANSION_SUFFIX,
                         generate_json, LLMNotConfigured, _json,
@@ -531,20 +518,32 @@ def cmd_run(args: argparse.Namespace) -> int:
                     if not _has_hits:
                         print(f"  [DELTA SWEEP] batch {batch_idx}: skipped — no keyword-hit uncited locators")
                     else:
-                        # Fix A: group into _DELTA_GROUP_SIZE chunks, cap at _MAX_DELTA_CALLS_PER_BATCH
-                        _max_sweep = _DELTA_GROUP_SIZE * _MAX_DELTA_CALLS_PER_BATCH
-                        _to_sweep = _uncited_ranked[:_max_sweep]
-                        _groups = [
-                            _to_sweep[i:i + _DELTA_GROUP_SIZE]
-                            for i in range(0, len(_to_sweep), _DELTA_GROUP_SIZE)
-                        ]
-                        _groups = _groups[:_MAX_DELTA_CALLS_PER_BATCH]
+                        # Group into _DELTA_GROUP_SIZE chunks; cap by batch AND per-source budget
+                        _used = _delta_calls_used.get(_batch_source_id, 0)
+                        _remaining = max(0, _max_delta_per_source - _used)
+                        print(
+                            f"  [DELTA BUDGET] source={_batch_source_id!r} "
+                            f"used={_used}/{_max_delta_per_source} remaining={_remaining}"
+                        )
+                        if _remaining == 0:
+                            print(f"  [DELTA SWEEP] batch {batch_idx}: skipped — per-source budget exhausted")
+                        else:
+                            _allowed = min(_MAX_DELTA_CALLS_PER_BATCH, _remaining)
+                            _max_sweep = _DELTA_GROUP_SIZE * _allowed
+                            _to_sweep = _uncited_ranked[:_max_sweep]
+                            _groups = [
+                                _to_sweep[i:i + _DELTA_GROUP_SIZE]
+                                for i in range(0, len(_to_sweep), _DELTA_GROUP_SIZE)
+                            ]
+                            _groups = _groups[:_allowed]
                         print(
                             f"  [DELTA SWEEP] batch {batch_idx}: uncited={len(_uncited)}, "
-                            f"groups={len(_groups)}, running=min({len(_groups)}, {_MAX_DELTA_CALLS_PER_BATCH})"
-                        )
+                            f"groups={len(_groups)}, running=min({len(_groups)}, {_allowed})"
+                        ) if _remaining > 0 else None
                         _delta_new_items = 0
                         _delta_new_locs: set[str] = set()
+                        if _remaining == 0:
+                            _groups = []
                         for grp_idx, group_locs in enumerate(_groups):
                             print(f"  [DELTA GROUP] locators={group_locs}")
                             # Build mini-sources: one entry per unique source, only this group's snippets
@@ -583,15 +582,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                                 continue
                             finally:
                                 Path(delta_tmp.name).unlink(missing_ok=True)
-                            if call_delay > 0:
-                                print(f"  Waiting {call_delay}s before delta group call...")
-                                time.sleep(call_delay)
                             delta_payload = _llm_call_with_retry(
                                 delta_rendered + _DELTA_GROUP_SUFFIX,
                                 generate_json, LLMNotConfigured, _json,
                                 schema_rel, job_id=args.job,
                                 label=f"delta batch {batch_idx} group={group_locs}",
                             )
+                            _delta_calls_used[_batch_source_id] = _delta_calls_used.get(_batch_source_id, 0) + 1
                             if delta_payload is not None:
                                 _before = _cited_locators_set(batch_payloads, _batch_doc_ids)
                                 batch_payloads.append(delta_payload)
@@ -614,9 +611,21 @@ def cmd_run(args: argparse.Namespace) -> int:
 
             partial_outputs.extend(batch_payloads)
 
-            if len(extraction_batches) > 1 and batch_idx < len(extraction_batches) and call_delay > 0:
-                print(f"  Waiting {call_delay}s for rate limit window...")
-                time.sleep(call_delay)
+            _batch_dur = time.perf_counter() - _batch_start
+            _batch_durations.append(_batch_dur)
+            _avg_dur = sum(_batch_durations) / len(_batch_durations)
+            _remaining_batches = len(extraction_batches) - batch_idx
+            print(
+                f"  [BATCH TIME] batch {batch_idx}/{len(extraction_batches)} "
+                f"source={src_name!r} locators={len(batch_locators)} "
+                f"duration={_batch_dur:.1f}s (avg={_avg_dur:.1f}s)"
+            )
+            if _remaining_batches > 0:
+                _eta_s = _avg_dur * _remaining_batches
+                print(
+                    f"  [ETA] remaining_batches={_remaining_batches} "
+                    f"approx_remaining={_eta_s / 60:.1f} min"
+                )
 
         if not partial_outputs:
             print("No valid outputs produced.", file=sys.stderr)
@@ -684,6 +693,9 @@ def _clean_citations(payload: dict) -> dict:
                     continue
                 if "example.com" in v:
                     continue
+            # Enforce snippet ≤ 300 chars to prevent schema validation failures
+            if k == "snippet" and isinstance(v, str) and len(v) > 300:
+                v = _truncate_at_word_boundary(v, 300)
             cleaned[k] = v
         return cleaned
 
@@ -882,6 +894,27 @@ _PLANNER_KEYWORD_FAMILIES: dict[str, tuple[str, ...]] = {
 
 _PLANNER_ENFORCEMENT_MAX_SEGMENTS = 10
 
+# Per-family caps on how many new locators enforcement may add.
+# Override any individual cap with HRH_ENFORCE_CAP_{FAMILY_UPPER} env var.
+_PLANNER_ENFORCEMENT_CAPS: dict[str, int] = {
+    "prerequisites":              2,
+    "evidence_gaps_uncertainty":  3,
+    "governance_process_dependencies": 3,
+    "operational_barriers":       5,
+    "equity_implications":        5,
+    "consequences_impacts":       5,
+}
+
+
+def _enforcement_cap(family: str) -> int:
+    """Return the per-family enforcement cap, respecting env overrides."""
+    env_key = f"HRH_ENFORCE_CAP_{family.upper()}"
+    default = _PLANNER_ENFORCEMENT_CAPS.get(family, 5)
+    try:
+        return int(os.getenv(env_key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
 
 def _enforce_planner_keyword_coverage(
     plans: list[dict],
@@ -922,19 +955,23 @@ def _enforce_planner_keyword_coverage(
         }
 
         for family, keywords in _PLANNER_KEYWORD_FAMILIES.items():
-            # Find uncovered locators whose full text matches any family keyword
-            missing: list[str] = [
-                loc
-                for loc, text in locator_text.items()
-                if loc not in covered
-                and any(kw in text.lower() for kw in keywords)
-            ]
-            if not missing:
+            cap = _enforcement_cap(family)
+            # Score each uncovered locator by distinct keyword hits for this family
+            scored: list[tuple[int, str]] = []
+            for loc, text in locator_text.items():
+                if loc not in covered:
+                    score = sum(1 for kw in keywords if kw in text.lower())
+                    if score > 0:
+                        scored.append((score, loc))
+            if not scored:
                 continue
 
+            # Sort by score desc; stable sort preserves insertion order for ties
+            scored.sort(key=lambda x: -x[0])
+            to_add = [loc for _, loc in scored[:cap]]
             print(
                 f"  [COVERAGE ENFORCE] source={sid!r} family={family!r} "
-                f"adding {len(missing)} locator(s): {missing}"
+                f"candidates={len(scored)} added={len(to_add)} cap={cap}"
             )
 
             # Prefer the highest-priority existing segment that targets this category
@@ -951,14 +988,14 @@ def _enforce_planner_keyword_coverage(
             )
 
             if target_seg is not None:
-                for loc in missing:
+                for loc in to_add:
                     if loc not in covered:
                         target_seg.setdefault("locators", []).append(loc)
                         covered.add(loc)
             elif len(segments) < _PLANNER_ENFORCEMENT_MAX_SEGMENTS:
                 new_seg = {
                     "segment_id": f"seg_{len(segments) + 1:03d}",
-                    "locators": [loc for loc in missing if loc not in covered],
+                    "locators": [loc for loc in to_add if loc not in covered],
                     "likely_categories": [family],
                     "priority": "medium",
                     "reason": f"Deterministic keyword coverage enforcement ({family!r})",
@@ -969,7 +1006,7 @@ def _enforce_planner_keyword_coverage(
             else:
                 # Segment cap reached: merge into the last segment
                 last_seg = segments[-1]
-                for loc in missing:
+                for loc in to_add:
                     if loc not in covered:
                         last_seg.setdefault("locators", []).append(loc)
                         covered.add(loc)
@@ -1055,6 +1092,7 @@ def _planner_to_batches(
     sources_by_id: dict,
     max_excerpts: int = 10,
     max_chars: int = 16_000,
+    max_batches_per_source: int = 10,
 ) -> list:
     """Convert planner segment plans into extraction source_batches.
 
@@ -1090,8 +1128,27 @@ def _planner_to_batches(
                     all_snips.append(locator_to_snip[loc])
         if not all_snips:
             continue
+        source_batches: list = []
         for sub_snips in _snippet_sub_batches(all_snips, max_excerpts, max_chars):
-            batches.append([{**src, "snippets": sub_snips}])
+            source_batches.append([{**src, "snippets": sub_snips}])
+        if len(source_batches) > max_batches_per_source:
+            included_locs: set[str] = {
+                snip.get("locator", "")
+                for b in source_batches[:max_batches_per_source]
+                for src_item in b
+                for snip in src_item.get("snippets", [])
+            }
+            skipped = [
+                snip.get("locator", "")
+                for snip in all_snips
+                if snip.get("locator") not in included_locs
+            ]
+            print(
+                f"  [BATCH CAP] source={sid!r} planned_locators={len(all_snips)}; "
+                f"capped_batches={max_batches_per_source}; skipped_locators={skipped}"
+            )
+            source_batches = source_batches[:max_batches_per_source]
+        batches.extend(source_batches)
     return batches
 
 
@@ -1320,6 +1377,10 @@ def _llm_call_with_retry(
 
         if schema_rel is None:
             return payload
+
+        # Truncate snippets to ≤300 chars before validation so the LLM does not
+        # need a repair round just for overlong snippets — corrected silently here.
+        payload = _clean_citations(payload)
 
         try:
             validate_output(payload, schema_rel)

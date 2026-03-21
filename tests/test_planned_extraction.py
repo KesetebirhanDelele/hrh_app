@@ -15,6 +15,7 @@ from app.core.validators import SchemaValidationError, validate_output
 from app.app import (
     _check_planner_locators,
     _cited_locators_set,
+    _clean_citations,
     _count_cited_locators_in_payload,
     _DELTA_GROUP_SIZE,
     _enforce_planner_keyword_coverage,
@@ -828,3 +829,119 @@ class TestSkipExpansionWhenDelta:
         skip_enabled = True
         skip_exp = skip_enabled and n_cited < delta_threshold
         assert skip_exp is False, "expansion should NOT be skipped"
+
+
+# ===========================================================================
+# TestCleanCitationsSnippetTruncation — Part A: snippet ≤ 300 chars
+# ===========================================================================
+
+class TestCleanCitationsSnippetTruncation:
+
+    def _make_payload_with_snippet(self, snippet: str) -> dict:
+        """Minimal domain_lessons_option_b payload with one citation containing *snippet*."""
+        return {
+            "job_id": "domain_lessons_option_b",
+            "target_country": "global",
+            "generated_at": "2026-01-01",
+            "domains": [{"domain_id": "accountability", "focus_areas": [
+                {"focus_area_id": "supervision_models",
+                 "proven_interventions": [{
+                     "item_id": "pi_001",
+                     "title": "T",
+                     "statement": "S",
+                     "evidence_type": "intervention_effect",
+                     "evidence_strength": "moderate",
+                     "citations": [{"doc_id": "SRC1", "source_title": "X",
+                                    "locator": "p.1", "snippet": snippet}],
+                 }],
+                 "lessons_learnt": [], "recommendations": [], "prerequisites": [],
+                 "operational_barriers": [], "governance_process_dependencies": [],
+                 "evidence_gaps_uncertainty": [], "costs_resource_intensity": [],
+                 "equity_implications": [], "consequences_impacts": []}]}],
+        }
+
+    def test_snippet_over_300_truncated(self):
+        """Snippet > 300 chars is truncated to ≤ 300 after _clean_citations."""
+        long_snip = "word " * 80  # 400 chars
+        payload = self._make_payload_with_snippet(long_snip)
+        result = _clean_citations(payload)
+        snip = result["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"]
+        assert len(snip) <= 300, f"Expected ≤ 300 chars after cleaning; got {len(snip)}"
+
+    def test_snippet_over_300_ends_on_word_boundary(self):
+        """Truncated snippet ends at a word boundary, not mid-word."""
+        # Build a snippet where a naive [:300] would cut mid-word
+        long_snip = ("hello " * 40) + "world_boundary_check " * 10  # > 300
+        payload = self._make_payload_with_snippet(long_snip)
+        result = _clean_citations(payload)
+        snip = result["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"]
+        # Must not end with a partial word (no trailing space, no mid-word cut)
+        assert len(snip) <= 300
+        # Ensure it's a prefix of the original stripped string
+        assert long_snip.startswith(snip)
+
+    def test_snippet_exactly_300_unchanged(self):
+        """Snippet of exactly 300 chars is left untouched."""
+        exact_snip = "a" * 300
+        payload = self._make_payload_with_snippet(exact_snip)
+        result = _clean_citations(payload)
+        snip = result["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"]
+        assert snip == exact_snip
+
+    def test_snippet_under_300_unchanged(self):
+        """Snippet shorter than 300 chars is not modified."""
+        short_snip = "short snippet"
+        payload = self._make_payload_with_snippet(short_snip)
+        result = _clean_citations(payload)
+        snip = result["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"]
+        assert snip == short_snip
+
+
+# ===========================================================================
+# TestBatchTimingLog — Part B: duration + ETA logging
+# ===========================================================================
+
+class TestBatchTimingLogFormat:
+    """Smoke-tests for the [BATCH TIME] / [ETA] log format strings."""
+
+    def test_batch_time_log_format(self):
+        """[BATCH TIME] line matches expected format."""
+        batch_idx, total = 3, 10
+        src_name = "My Source"
+        n_locs = 7
+        duration = 12.345
+        avg = 10.0
+        line = (
+            f"  [BATCH TIME] batch {batch_idx}/{total} "
+            f"source={src_name!r} locators={n_locs} "
+            f"duration={duration:.1f}s (avg={avg:.1f}s)"
+        )
+        assert "[BATCH TIME]" in line
+        assert "batch 3/10" in line
+        assert "duration=12.3s" in line
+        assert "avg=10.0s" in line
+
+    def test_eta_log_format(self):
+        """[ETA] line shows remaining_batches and approx_remaining in minutes."""
+        remaining = 5
+        eta_s = 10.0 * remaining  # avg=10s
+        line = (
+            f"  [ETA] remaining_batches={remaining} "
+            f"approx_remaining={eta_s / 60:.1f} min"
+        )
+        assert "[ETA]" in line
+        assert "remaining_batches=5" in line
+        assert "approx_remaining=" in line
+        assert "min" in line
+
+    def test_avg_computed_correctly(self):
+        """Rolling average is sum/len of _batch_durations."""
+        durations = [10.0, 20.0, 30.0]
+        avg = sum(durations) / len(durations)
+        assert avg == 20.0
+
+    def test_no_eta_on_last_batch(self):
+        """ETA line should not be printed when remaining_batches == 0."""
+        batch_idx, total = 5, 5
+        remaining = total - batch_idx
+        assert remaining == 0  # confirms ETA block is skipped

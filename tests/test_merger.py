@@ -330,9 +330,14 @@ def _cost(title: str, intensity: str, driver: str) -> dict:
 
 class TestMergeDomainLessons:
     def test_single_output_passthrough(self) -> None:
+        """Single partial is reconstructed (intervention_id assigned) — same content."""
         output = _dl_partial([_item("Checklists", "weak", "SRC1", "p.1")])
         result = merge_outputs("domain_lessons_option_b", [output])
-        assert result is output
+        # Not identity-checked because merger always reconstructs to assign intervention_id
+        pi = result["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(pi) == 1
+        assert pi[0]["title"] == "Checklists"
+        assert "intervention_id" in pi[0]
 
     def test_two_partials_different_titles_both_appear(self) -> None:
         """Items with different titles from two partials are both kept."""

@@ -59,8 +59,8 @@ jobs:
     output_dir: "outputs/domain_solutions_from_evidence"
 
   - job_id: domain_lessons_option_b
-    label: "Domain Lessons Option B (nine-category evidence extraction)"
-    spec_file: "specs/domain_lessons_option_b.json"
+    label: "Domain Lessons Option B (ten-category evidence extraction, lean MENU output)"
+    spec_file: "specs/domain_lessons_option_b_v2.json"
     prompt_template: "prompts/domain_lessons_option_b.md"
     output_schema: "schemas/domain_lessons_option_b.schema.json"
     output_dir: "outputs/domain_lessons_option_b"

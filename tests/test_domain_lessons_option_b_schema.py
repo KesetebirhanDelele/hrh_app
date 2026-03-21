@@ -71,18 +71,18 @@ def _bar_item_pass(item_id: str = "bar_001") -> dict:
 
 
 def _bar_item_fail(item_id: str = "bar_001") -> dict:
-    """Barrier item whose snippet only describes a cause, no barrier keywords — must fail."""
+    """Barrier item whose snippet only describes a cause with no barrier keywords — must fail."""
     return {
         "item_id": item_id,
         "title": "Low Supervision Rates",
-        "statement": "Insufficient supervision rates were associated with higher absenteeism.",
+        "statement": "Low supervision rates were associated with higher absenteeism.",
         "evidence_type": "determinant_mechanism",
         "evidence_strength": "moderate",
         "citations": [{
             "doc_id": "SRC1",
             "source_title": "Vallieres et al. BMC Health Services Research 2018",
             "locator": "p.2",
-            "snippet": "causes included insufficient supervision (56%) and low pay (44%).",
+            "snippet": "causes included low supervision (56%) and low pay (44%).",
         }],
     }
 
@@ -491,8 +491,9 @@ def test_merge_consequences_impacts_deduplicates() -> None:
 # XLSX renderer — consequences_impacts appears in items sheet
 # ---------------------------------------------------------------------------
 
-def test_xlsx_includes_consequences_impacts_row() -> None:
-    """XLSX items sheet contains a row with category='consequences_impacts'."""
+def test_xlsx_consequences_impacts_not_in_menu() -> None:
+    """consequences_impacts items are NOT in the lean 10-col MENU — neither as rows nor as
+    fa-level aggregations. The category stays in JSON but never produces MENU output."""
     openpyxl = pytest.importorskip("openpyxl")
     load_workbook = openpyxl.load_workbook
     import tempfile
@@ -508,10 +509,11 @@ def test_xlsx_includes_consequences_impacts_row() -> None:
     try:
         render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
         wb = load_workbook(tmp_path)
-        ws = wb["items"]
-        categories = [row[2] for row in ws.iter_rows(min_row=2, values_only=True) if row[2]]
-        assert "consequences_impacts" in categories, (
-            f"'consequences_impacts' not found in items sheet. Found: {set(categories)}"
+        ws = wb["MENU"]
+        # The consequences_impacts statement should NOT appear in any MENU cell
+        all_vals = [str(cell.value) for row in ws.iter_rows(min_row=2) for cell in row if cell.value]
+        assert not any("Delayed Patient Access" in v for v in all_vals), (
+            f"consequences_impacts title leaked into MENU. Values: {[v for v in all_vals if 'Delayed' in v]}"
         )
     finally:
         Path(tmp_path).unlink(missing_ok=True)
@@ -640,15 +642,15 @@ def test_barrier_no_keyword_snippet_neutral_statement_fails() -> None:
     bar_item = {
         "item_id": "bar_001",
         "title": "Supervision Gap",
-        "statement": "Supervision was insufficient in rural areas.",
+        "statement": "Supervision rates were low in rural areas.",
         "evidence_type": "determinant_mechanism",
         "evidence_strength": "moderate",
         "citations": [{
             "doc_id": "SRC1",
             "source_title": "Vallieres et al. BMC Health Services Research 2018",
             "locator": "p.3",
-            # Neutral snippet — causes, not barriers or constraints
-            "snippet": "causes included insufficient supervision (56%) and low pay (44%).",
+            # Neutral snippet — causal/statistical framing only, no barrier keywords
+            "snippet": "causes included low supervision rates (56%) and low pay (44%).",
         }],
     }
     payload["domains"][0]["focus_areas"][0]["operational_barriers"] = [bar_item]
@@ -769,8 +771,9 @@ def test_cost_item_with_applicable_countries_passes() -> None:
     validate_output(payload, SCHEMA)  # must not raise
 
 
-def test_xlsx_applicable_countries_column_present() -> None:
-    """XLSX items sheet has an 'applicable_countries' column header."""
+def test_xlsx_applicable_countries_not_in_lean_menu() -> None:
+    """Lean 10-col MENU does not have a 'Country of the intervention' column.
+    applicable_countries is stored in JSON but not rendered in the MENU sheet."""
     openpyxl = pytest.importorskip("openpyxl")
     import tempfile
     from pathlib import Path
@@ -786,39 +789,24 @@ def test_xlsx_applicable_countries_column_present() -> None:
     try:
         render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
         wb = openpyxl.load_workbook(tmp_path)
-        ws = wb["items"]
+        ws = wb["MENU"]
         headers = [cell.value for cell in ws[1]]
-        assert "applicable_countries" in headers, f"Header missing. Found: {headers}"
-        col_idx = headers.index("applicable_countries")
-        # Check the data row has the countries value
-        data_row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
-        assert data_row[col_idx] == "Ethiopia, Kenya"
+        # The lean 10-col MENU does not include 'Country of the intervention'
+        assert "Country of the intervention" not in headers, (
+            f"Lean 10-col MENU should not include Country column. Headers: {headers}"
+        )
+        assert len(headers) == 10, f"Expected 10 headers, got {len(headers)}: {headers}"
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def test_xlsx_applicable_countries_blank_when_absent() -> None:
-    """XLSX items sheet has empty applicable_countries cell when field is absent."""
-    openpyxl = pytest.importorskip("openpyxl")
-    import tempfile
-    from pathlib import Path
-    from app.render.xlsx import render_xlsx
-
+def test_xlsx_applicable_countries_field_preserved_in_json() -> None:
+    """applicable_countries field is preserved in the JSON output (schema accepts it)."""
     payload = copy.deepcopy(VALID_PAYLOAD)
-    # No applicable_countries on the item
-
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
-        tmp_path = f.name
-    try:
-        render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
-        wb = openpyxl.load_workbook(tmp_path)
-        ws = wb["items"]
-        headers = [cell.value for cell in ws[1]]
-        col_idx = headers.index("applicable_countries")
-        data_row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
-        assert data_row[col_idx] in ("", None)
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+    payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["applicable_countries"] = [
+        "Ethiopia", "Kenya"
+    ]
+    validate_output(payload, SCHEMA)  # must not raise
 
 
 def test_md_applicable_countries_rendered() -> None:
@@ -840,3 +828,765 @@ def test_md_applicable_countries_absent_when_empty() -> None:
     payload = copy.deepcopy(VALID_PAYLOAD)
     md = render_markdown("domain_lessons_option_b", payload)
     assert "Countries:" not in md
+
+
+# ---------------------------------------------------------------------------
+# Task 4F — XLSX MENU + CITATIONS structure tests
+# ---------------------------------------------------------------------------
+
+_MENU_EXPECTED_HEADERS = [
+    "Intervention ID",
+    "Title",
+    "HRH-II Package Component",
+    "Description",
+    "Evidence status",
+    "Strength of evidence",
+    "Evidence design/type",
+    "Target cadre & setting",
+    "Implementation considerations",
+    "Expected impact",
+]
+
+
+def _render_to_wb(payload: dict):
+    """Helper: render payload to xlsx and return openpyxl workbook."""
+    openpyxl = pytest.importorskip("openpyxl")
+    import tempfile
+    from pathlib import Path
+    from app.render.xlsx import render_xlsx
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        tmp_path = f.name
+    try:
+        render_xlsx("domain_lessons_option_b", payload, Path(tmp_path))
+        wb = openpyxl.load_workbook(tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    return wb
+
+
+class TestXlsxMenuStructure:
+    """XLSX MENU sheet has exactly 10 columns in the correct order (lean solutions menu)."""
+
+    def test_menu_sheet_exists(self) -> None:
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        assert "MENU" in wb.sheetnames
+
+    def test_menu_has_10_columns(self) -> None:
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        headers = [cell.value for cell in wb["MENU"][1]]
+        assert len(headers) == 10, f"Expected 10 columns, got {len(headers)}: {headers}"
+
+    def test_menu_column_order(self) -> None:
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        headers = [cell.value for cell in wb["MENU"][1]]
+        assert headers == _MENU_EXPECTED_HEADERS, (
+            f"Column order mismatch.\nExpected: {_MENU_EXPECTED_HEADERS}\nGot:      {headers}"
+        )
+
+    def test_menu_intervention_id_populated(self) -> None:
+        """Intervention ID column is non-empty for each data row."""
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        ws = wb["MENU"]
+        ids = [row[0] for row in ws.iter_rows(min_row=2, values_only=True) if row[0]]
+        assert len(ids) > 0, "No rows with Intervention ID found in MENU sheet"
+
+    def test_menu_hrh_package_component_is_col3(self) -> None:
+        """HRH-II Package Component is col 3 (index 2) and encodes domain → focus_area."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"] = [_item()]
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        components = [row[2] for row in ws.iter_rows(min_row=2, values_only=True) if row[2]]
+        assert any("accountability" in c and "supervision_models" in c for c in components), (
+            f"Expected domain+focus_area in HRH-II Package Component (col 3). Got: {components}"
+        )
+
+
+class TestXlsxCitationsSheet:
+    """XLSX CITATIONS sheet has correct structure."""
+
+    def test_citations_sheet_exists(self) -> None:
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        assert "CITATIONS" in wb.sheetnames
+
+    def test_citations_headers(self) -> None:
+        """CITATIONS sheet has exactly 5 columns (Intervention ID, doc_id, source_title, locator, snippet)."""
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        headers = [cell.value for cell in wb["CITATIONS"][1]]
+        expected = ["Intervention ID", "doc_id", "source_title", "locator", "snippet"]
+        assert headers == expected, f"CITATIONS headers mismatch.\nExpected: {expected}\nGot: {headers}"
+
+    def test_citations_one_row_per_citation(self) -> None:
+        """Each citation from MENU rows (proven_interventions + recommendations) produces one row."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        # VALID_PAYLOAD has: 1 proven_intervention + 1 recommendation as MENU rows (2 citations)
+        # gap and cost items are NOT MENU rows → not in CITATIONS
+        wb = _render_to_wb(payload)
+        ws = wb["CITATIONS"]
+        data_rows = list(ws.iter_rows(min_row=2, values_only=True))
+        assert len(data_rows) == 2, f"Expected 2 citation rows (pi + rec only), got {len(data_rows)}"
+
+    def test_citations_intervention_id_matches_menu(self) -> None:
+        """Intervention IDs in CITATIONS match those in MENU."""
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        menu_ids = {row[0] for row in wb["MENU"].iter_rows(min_row=2, values_only=True) if row[0]}
+        cit_ids = {row[0] for row in wb["CITATIONS"].iter_rows(min_row=2, values_only=True) if row[0]}
+        assert cit_ids.issubset(menu_ids), (
+            f"CITATIONS has IDs not in MENU: {cit_ids - menu_ids}"
+        )
+
+    def test_citations_no_extra_sheets(self) -> None:
+        """Only MENU and CITATIONS sheets are produced — no legacy 'items'/'costs' sheets."""
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        assert "items" not in wb.sheetnames
+        assert "costs" not in wb.sheetnames
+        assert set(wb.sheetnames) == {"MENU", "CITATIONS"}
+
+
+# ---------------------------------------------------------------------------
+# Task 4F — merger dedupe + intervention_id tests
+# ---------------------------------------------------------------------------
+
+class TestMergerDedupeAndInterventionId:
+    """Merger correctly deduplicates items and assigns stable intervention_ids."""
+
+    def _make_partial(self, items: list, cat: str = "proven_interventions") -> dict:
+        fa: dict = {
+            "focus_area_id": "supervision_models",
+            **{c: [] for c in (
+                "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+                "operational_barriers", "governance_process_dependencies",
+                "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+                "consequences_impacts",
+            )},
+        }
+        fa[cat] = items
+        return {
+            "job_id": "domain_lessons_option_b",
+            "target_country": "Ethiopia",
+            "generated_at": "2026-01-01",
+            "domains": [{"domain_id": "accountability", "focus_areas": [fa]}],
+        }
+
+    def test_identical_title_deduplicates_to_one_item(self) -> None:
+        from app.analyze.merger import merge_outputs
+        cit1 = {**_citation("SRC1"), "locator": "p.1"}
+        cit2 = {**_citation("SRC2"), "locator": "p.2", "source_title": "Source Two",
+                "snippet": "Districts saw improvement."}
+        item_a = dict(_item()) | {"citations": [cit1]}
+        item_b = dict(_item()) | {"citations": [cit2]}
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_partial([item_a]), self._make_partial([item_b])])
+        items = merged["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(items) == 1, f"Expected 1 merged item, got {len(items)}"
+        assert len(items[0]["citations"]) == 2
+
+    def test_case_insensitive_title_deduplicates(self) -> None:
+        from app.analyze.merger import merge_outputs
+        item_upper = dict(_item()) | {"title": "Structured Supervisory Checklists"}
+        item_lower = dict(_item()) | {"title": "structured supervisory checklists"}
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_partial([item_upper]), self._make_partial([item_lower])])
+        items = merged["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(items) == 1
+
+    def test_different_titles_produce_two_items(self) -> None:
+        from app.analyze.merger import merge_outputs
+        item_a = dict(_item("id_1")) | {"title": "Checklists"}
+        item_b = dict(_item("id_2")) | {"title": "Performance Contracts"}
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_partial([item_a]), self._make_partial([item_b])])
+        items = merged["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(items) == 2
+
+    def test_intervention_id_assigned_in_merged_output(self) -> None:
+        from app.analyze.merger import merge_outputs
+        merged = merge_outputs("domain_lessons_option_b", [self._make_partial([_item()])])
+        item = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        assert "intervention_id" in item, "intervention_id not set by merger"
+        assert item["intervention_id"], "intervention_id is empty"
+
+    def test_applicable_countries_union_across_partials(self) -> None:
+        from app.analyze.merger import merge_outputs
+        item_a = dict(_item()) | {"applicable_countries": ["Ethiopia"]}
+        item_b = dict(_item()) | {"applicable_countries": ["Kenya"]}
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_partial([item_a]), self._make_partial([item_b])])
+        item = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        countries = item.get("applicable_countries", [])
+        assert "Ethiopia" in countries and "Kenya" in countries, (
+            f"Expected union of countries, got: {countries}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Session 5 — MENU redesign tests
+# ---------------------------------------------------------------------------
+
+def _det_item(item_id: str = "pi_002") -> dict:
+    """proven_interventions item with evidence_type=determinant_mechanism (FORBIDDEN in MENU)."""
+    return {
+        "item_id": item_id,
+        "title": "Low Supervision Rate Predictor",
+        "statement": "Low supervision rate is associated with higher absenteeism.",
+        "evidence_type": "determinant_mechanism",
+        "evidence_strength": "weak",
+        "citations": [_citation()],
+    }
+
+
+class TestMenuEligibilityFilter:
+    """MENU rows come ONLY from proven_interventions + recommendations; determinant items excluded."""
+
+    def test_only_pi_and_rec_produce_menu_rows(self) -> None:
+        """lessons_learnt, prerequisites, operational_barriers, etc. produce NO MENU rows."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        # Clear proven_interventions so only non-MENU categories have content
+        fa["proven_interventions"] = []
+        fa["lessons_learnt"] = [dict(_item("ll_001")) | {"evidence_type": "determinant_mechanism"}]
+        fa["operational_barriers"] = [_bar_item_pass()]
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        data_rows = [row for row in ws.iter_rows(min_row=2, values_only=True) if any(row)]
+        # Only the recommendation from VALID_PAYLOAD should remain
+        assert len(data_rows) == 1, (
+            f"Expected 1 MENU row (recommendation only), got {len(data_rows)}"
+        )
+
+    def test_determinant_mechanism_in_proven_interventions_excluded(self) -> None:
+        """Items in proven_interventions with evidence_type=determinant_mechanism are NOT MENU rows."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [_det_item()]  # only determinant item
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        data_rows = [row for row in ws.iter_rows(min_row=2, values_only=True) if any(row)]
+        titles = [row[1] for row in data_rows if row[1]]
+        assert "Low Supervision Rate Predictor" not in titles, (
+            f"determinant_mechanism item appeared in MENU: {titles}"
+        )
+
+    def test_evidence_status_proven_for_pi_category(self) -> None:
+        """proven_interventions category maps to 'proven' in Evidence status col (index 4)."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [dict(_item()) | {"evidence_type": "intervention_effect"}]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        statuses = [row[4] for row in ws.iter_rows(min_row=2, values_only=True) if row[4]]
+        assert "proven" in statuses, f"Expected 'proven' in Evidence status col (index 4). Got: {statuses}"
+
+    def test_evidence_status_proven_for_validated_tool(self) -> None:
+        """validated_tool_or_metric in proven_interventions also maps to 'proven'."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [dict(_item()) | {"evidence_type": "validated_tool_or_metric"}]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        statuses = [row[4] for row in ws.iter_rows(min_row=2, values_only=True) if row[4]]
+        assert "proven" in statuses, f"Expected 'proven' in Evidence status col. Got: {statuses}"
+
+    def test_evidence_status_recommendation_only_for_rec(self) -> None:
+        """recommendations category maps to 'recommendation_only' in Evidence status col (index 4)."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = []
+        fa["recommendations"] = [_rec_item()]
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        statuses = [row[4] for row in ws.iter_rows(min_row=2, values_only=True) if row[4]]
+        assert "recommendation_only" in statuses, (
+            f"Expected 'recommendation_only' in Evidence status col (index 4). Got: {statuses}"
+        )
+
+    def test_evidence_design_type_in_col7(self) -> None:
+        """evidence_design_type field appears in Evidence design/type col (index 6)."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [dict(_item()) | {"evidence_design_type": "RCT"}]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        design_vals = [row[6] for row in ws.iter_rows(min_row=2, values_only=True) if row[6]]
+        assert "RCT" in design_vals, f"evidence_design_type 'RCT' not in col 7 (index 6). Got: {design_vals}"
+
+    def test_non_menu_categories_not_in_any_column(self) -> None:
+        """operational_barriers and consequences_impacts produce NO MENU rows or fa-level agg columns."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [_item()]
+        fa["recommendations"] = []
+        fa["operational_barriers"] = [_bar_item_pass()]
+        fa["consequences_impacts"] = [_con_item()]
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        # 10-col MENU: non-menu category content must not appear in any column
+        all_vals = set()
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            for v in row:
+                if v:
+                    all_vals.add(str(v))
+        # The delayed access statement from consequences_impacts should NOT be in any MENU cell
+        assert not any("Delayed Patient Access" in v for v in all_vals), (
+            f"consequences_impacts content leaked into MENU: {[v for v in all_vals if 'Delayed' in v]}"
+        )
+
+
+class TestSolutionsOnlyValidator:
+    """_validate_proven_interventions_are_actions raises on determinant_mechanism in proven_interventions."""
+
+    def test_determinant_in_proven_interventions_raises(self) -> None:
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"] = [_det_item()]
+        with pytest.raises(SchemaValidationError, match="determinant_mechanism"):
+            validate_output(payload, SCHEMA)
+
+    def test_intervention_effect_in_proven_interventions_passes(self) -> None:
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"] = [_item()]
+        validate_output(payload, SCHEMA)  # must not raise
+
+    def test_determinant_in_lessons_learnt_passes(self) -> None:
+        """determinant_mechanism in lessons_learnt is valid — only proven_interventions is checked."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        ll = dict(_item("ll_001")) | {"evidence_type": "determinant_mechanism"}
+        payload["domains"][0]["focus_areas"][0]["lessons_learnt"] = [ll]
+        validate_output(payload, SCHEMA)  # must not raise
+
+
+class TestMergerDedupeEvidenceType:
+    """Dedupe key includes evidence_type — items with same title but different type stay separate."""
+
+    def _make_partial(self, pi_items: list, rec_items: list) -> dict:
+        fa: dict = {
+            "focus_area_id": "supervision_models",
+            **{c: [] for c in (
+                "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+                "operational_barriers", "governance_process_dependencies",
+                "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+                "consequences_impacts",
+            )},
+        }
+        fa["proven_interventions"] = pi_items
+        fa["recommendations"] = rec_items
+        return {
+            "job_id": "domain_lessons_option_b",
+            "target_country": "Ethiopia",
+            "generated_at": "2026-01-01",
+            "domains": [{"domain_id": "accountability", "focus_areas": [fa]}],
+        }
+
+    def test_same_title_diff_evidence_type_not_merged(self) -> None:
+        """Same title in proven_interventions (intervention_effect) and recommendations
+        (recommendation_only) must produce 2 items — not merged."""
+        from app.analyze.merger import merge_outputs
+        pi = dict(_item("pi_001")) | {"evidence_type": "intervention_effect", "title": "Same Title"}
+        rec = dict(_rec_item("rec_001")) | {"evidence_type": "recommendation_only", "title": "Same Title"}
+        partial = self._make_partial([pi], [rec])
+        merged = merge_outputs("domain_lessons_option_b", [partial])
+        pi_items = merged["domains"][0]["focus_areas"][0]["proven_interventions"]
+        rec_items = merged["domains"][0]["focus_areas"][0]["recommendations"]
+        assert len(pi_items) == 1 and len(rec_items) == 1, (
+            f"Expected 1 pi + 1 rec (not merged). Got pi={len(pi_items)}, rec={len(rec_items)}"
+        )
+
+    def test_same_title_same_evidence_type_merges(self) -> None:
+        """Same title AND same evidence_type across partials should still merge to 1 item."""
+        from app.analyze.merger import merge_outputs
+        cit1 = {**_citation("SRC1"), "locator": "p.1"}
+        cit2 = {**_citation("SRC2"), "locator": "p.2", "source_title": "Source Two",
+                "snippet": "Districts saw improvement."}
+        pi_a = dict(_item("pi_001")) | {"citations": [cit1], "evidence_type": "intervention_effect"}
+        pi_b = dict(_item("pi_002")) | {"citations": [cit2], "evidence_type": "intervention_effect"}
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_partial([pi_a], []), self._make_partial([pi_b], [])])
+        pi_items = merged["domains"][0]["focus_areas"][0]["proven_interventions"]
+        assert len(pi_items) == 1, f"Expected 1 merged pi item, got {len(pi_items)}"
+        assert len(pi_items[0]["citations"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Session 6 — new optional fields: schema, renderer, merger
+# ---------------------------------------------------------------------------
+
+def _rich_item(item_id: str = "pi_001") -> dict:
+    """proven_interventions item with all new optional fields populated."""
+    return {
+        "item_id": item_id,
+        "title": "Structured Supervisory Checklists",
+        "statement": "Districts using structured checklists saw a 23% improvement in protocol adherence.",
+        "evidence_summary": "Supervisory checklists improved protocol adherence by 23% in a controlled pre-post study.",
+        "mechanism": "Checklists standardise expectations, reducing variation in supervisory feedback.",
+        "evidence_design_type": "quasi-experimental",
+        "target_cadre_setting": "HEWs, rural health posts",
+        "governance_operating_model": "Owner: District health officer\nActors: Supervisors visit monthly\nData/artifacts: Completed checklist\nCadence/trigger: Monthly; escalate if score <70%",
+        "intervention_risks": [
+            "Checklists may be completed retrospectively",
+            "HEWs may perform only during visit",
+        ],
+        "expected_impact": "Observed: 23% improvement in protocol adherence among HEWs.",
+        "evidence_type": "intervention_effect",
+        "evidence_strength": "moderate",
+        "citations": [_citation()],
+    }
+
+
+class TestSchemaNewFields:
+    """New optional fields are accepted by schema validation."""
+
+    def test_rich_item_passes_schema(self) -> None:
+        """Item with all new optional fields populated validates without error."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"] = [_rich_item()]
+        validate_output(payload, SCHEMA)  # must not raise
+
+    def test_intervention_risks_is_array(self) -> None:
+        """intervention_risks must be an array; a string value fails schema."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        bad = dict(_rich_item()) | {"intervention_risks": "not an array"}
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"] = [bad]
+        with pytest.raises(Exception):
+            validate_output(payload, SCHEMA)
+
+
+class TestMenuRendererNewFields:
+    """MENU renderer maps new fields to correct 10-col positions and applies fallbacks."""
+
+    def test_intervention_risks_in_col9_when_present(self) -> None:
+        """intervention_risks bullets → Implementation considerations col (index 8) when populated."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [_rich_item()]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col9_vals = [row[8] for row in ws.iter_rows(min_row=2, values_only=True) if row[8]]
+        assert any("retrospectively" in str(v) for v in col9_vals), (
+            f"intervention_risks not in Implementation considerations col (index 8). Got: {col9_vals}"
+        )
+
+    def test_impl_considerations_NOT_from_fa_consequences(self) -> None:
+        """Implementation considerations must NOT use fa-level consequences_impacts aggregation."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        # Item with no intervention_risks; fa has consequences_impacts
+        item = dict(_item())  # no intervention_risks
+        fa["proven_interventions"] = [item]
+        fa["recommendations"] = []
+        fa["consequences_impacts"] = [_con_item()]
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col9_vals = [row[8] for row in ws.iter_rows(min_row=2, values_only=True)]
+        # Col 9 (index 8) must be blank (or empty) — not filled from consequences_impacts
+        assert all(not v for v in col9_vals), (
+            f"Implementation considerations incorrectly filled from fa-level agg. Got: {col9_vals}"
+        )
+
+    def test_expected_impact_in_col10_when_present(self) -> None:
+        """expected_impact → Expected impact col (index 9) when populated."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [_rich_item()]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col10_vals = [row[9] for row in ws.iter_rows(min_row=2, values_only=True) if row[9]]
+        assert any("Observed:" in str(v) for v in col10_vals), (
+            f"expected_impact not in Expected impact col (index 9). Got: {col10_vals}"
+        )
+
+    def test_expected_impact_fallback_observed_prefix_for_proven(self) -> None:
+        """Fallback: proven item without expected_impact gets 'Observed: ' prefix in col 10."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        item = dict(_item()) | {"evidence_type": "intervention_effect"}  # no expected_impact
+        fa["proven_interventions"] = [item]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col10_vals = [row[9] for row in ws.iter_rows(min_row=2, values_only=True) if row[9]]
+        assert any(str(v).startswith("Observed:") for v in col10_vals), (
+            f"Fallback for proven should start with 'Observed:'. Got: {col10_vals}"
+        )
+
+    def test_expected_impact_fallback_intended_prefix_for_recommendation(self) -> None:
+        """Fallback: recommendation_only item without expected_impact gets 'Intended to: ' prefix."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        item = dict(_rec_item())  # no expected_impact, evidence_type=recommendation_only
+        fa["proven_interventions"] = []
+        fa["recommendations"] = [item]
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col10_vals = [row[9] for row in ws.iter_rows(min_row=2, values_only=True) if row[9]]
+        assert any(str(v).startswith("Intended to:") for v in col10_vals), (
+            f"Fallback for recommendation should start with 'Intended to:'. Got: {col10_vals}"
+        )
+
+    def test_evidence_design_type_in_col7(self) -> None:
+        """evidence_design_type → Evidence design/type col (index 6)."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [_rich_item()]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col7_vals = [row[6] for row in ws.iter_rows(min_row=2, values_only=True) if row[6]]
+        assert "quasi-experimental" in col7_vals, (
+            f"evidence_design_type not in Evidence design/type col (index 6). Got: {col7_vals}"
+        )
+
+    def test_evidence_design_type_defaults_to_unknown(self) -> None:
+        """When evidence_design_type is absent, col 7 (index 6) shows 'unknown'."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        item = dict(_item())  # no evidence_design_type
+        fa["proven_interventions"] = [item]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col7_vals = [row[6] for row in ws.iter_rows(min_row=2, values_only=True)]
+        assert any(v == "unknown" for v in col7_vals), (
+            f"Missing evidence_design_type should default to 'unknown'. Got: {col7_vals}"
+        )
+
+    def test_target_cadre_setting_in_col8(self) -> None:
+        """target_cadre_setting → Target cadre & setting col (index 7)."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        fa["proven_interventions"] = [_rich_item()]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col8_vals = [row[7] for row in ws.iter_rows(min_row=2, values_only=True) if row[7]]
+        assert any("HEWs" in str(v) for v in col8_vals), (
+            f"target_cadre_setting not in Target cadre & setting col (index 7). Got: {col8_vals}"
+        )
+
+    def test_target_cadre_setting_defaults_to_unspecified(self) -> None:
+        """When target_cadre_setting is absent, col 8 (index 7) shows 'unspecified'."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        fa = payload["domains"][0]["focus_areas"][0]
+        item = dict(_item())  # no target_cadre_setting
+        fa["proven_interventions"] = [item]
+        fa["recommendations"] = []
+        wb = _render_to_wb(payload)
+        ws = wb["MENU"]
+        col8_vals = [row[7] for row in ws.iter_rows(min_row=2, values_only=True)]
+        assert any(v == "unspecified" for v in col8_vals), (
+            f"Missing target_cadre_setting should default to 'unspecified'. Got: {col8_vals}"
+        )
+
+
+class TestMergerNewFieldPreservation:
+    """Merger preserves new optional fields across partials."""
+
+    def _make_pi_partial(self, item: dict) -> dict:
+        fa: dict = {
+            "focus_area_id": "supervision_models",
+            **{c: [] for c in (
+                "proven_interventions", "lessons_learnt", "recommendations", "prerequisites",
+                "operational_barriers", "governance_process_dependencies",
+                "evidence_gaps_uncertainty", "costs_resource_intensity", "equity_implications",
+                "consequences_impacts",
+            )},
+        }
+        fa["proven_interventions"] = [item]
+        return {
+            "job_id": "domain_lessons_option_b",
+            "target_country": "Ethiopia",
+            "generated_at": "2026-01-01",
+            "domains": [{"domain_id": "accountability", "focus_areas": [fa]}],
+        }
+
+    def test_evidence_summary_carried_through_merge(self) -> None:
+        from app.analyze.merger import merge_outputs
+        item = dict(_rich_item()) | {"citations": [{**_citation("SRC1"), "locator": "p.1"}]}
+        merged = merge_outputs("domain_lessons_option_b", [self._make_pi_partial(item)])
+        result = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        assert result.get("evidence_summary"), "evidence_summary lost after merge"
+        assert "23%" in result["evidence_summary"]
+
+    def test_evidence_summary_filled_from_second_partial(self) -> None:
+        """If first partial lacks evidence_summary, it is filled from second partial."""
+        from app.analyze.merger import merge_outputs
+        item_no_es = dict(_item("pi_001")) | {"citations": [{**_citation("SRC1"), "locator": "p.1"}]}
+        item_with_es = dict(_item("pi_002")) | {
+            "evidence_summary": "Checklists improved adherence by 15%.",
+            "citations": [{**_citation("SRC2"), "locator": "p.2",
+                           "source_title": "Source Two", "snippet": "Districts saw improvement."}],
+        }
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_pi_partial(item_no_es), self._make_pi_partial(item_with_es)])
+        result = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        assert result.get("evidence_summary") == "Checklists improved adherence by 15%.", (
+            f"evidence_summary not filled from second partial. Got: {result.get('evidence_summary')}"
+        )
+
+    def test_intervention_risks_unioned_across_partials(self) -> None:
+        """intervention_risks from two partials are unioned (up to 3)."""
+        from app.analyze.merger import merge_outputs
+        item_a = dict(_item("pi_001")) | {
+            "intervention_risks": ["Risk A"],
+            "citations": [{**_citation("SRC1"), "locator": "p.1"}],
+        }
+        item_b = dict(_item("pi_002")) | {
+            "intervention_risks": ["Risk B"],
+            "citations": [{**_citation("SRC2"), "locator": "p.2",
+                           "source_title": "Source Two", "snippet": "Districts saw improvement."}],
+        }
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_pi_partial(item_a), self._make_pi_partial(item_b)])
+        result = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        risks = result.get("intervention_risks") or []
+        assert "Risk A" in risks and "Risk B" in risks, (
+            f"intervention_risks not unioned. Got: {risks}"
+        )
+
+    def test_intervention_risks_capped_at_3(self) -> None:
+        """intervention_risks never exceeds 3 bullets after merge."""
+        from app.analyze.merger import merge_outputs
+        item_a = dict(_item("pi_001")) | {
+            "intervention_risks": ["R1", "R2"],
+            "citations": [{**_citation("SRC1"), "locator": "p.1"}],
+        }
+        item_b = dict(_item("pi_002")) | {
+            "intervention_risks": ["R3", "R4"],
+            "citations": [{**_citation("SRC2"), "locator": "p.2",
+                           "source_title": "Source Two", "snippet": "Districts saw improvement."}],
+        }
+        merged = merge_outputs("domain_lessons_option_b",
+                               [self._make_pi_partial(item_a), self._make_pi_partial(item_b)])
+        result = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        risks = result.get("intervention_risks") or []
+        assert len(risks) <= 3, f"intervention_risks exceeded cap of 3. Got: {risks}"
+
+    def test_governance_operating_model_carried_through_merge(self) -> None:
+        from app.analyze.merger import merge_outputs
+        gov_text = "Owner: DHO\nActors: Supervisors\nData: Checklist\nCadence: Monthly"
+        item = dict(_item()) | {
+            "governance_operating_model": gov_text,
+            "citations": [{**_citation("SRC1"), "locator": "p.1"}],
+        }
+        merged = merge_outputs("domain_lessons_option_b", [self._make_pi_partial(item)])
+        result = merged["domains"][0]["focus_areas"][0]["proven_interventions"][0]
+        assert result.get("governance_operating_model") == gov_text, (
+            f"governance_operating_model lost after merge. Got: {result.get('governance_operating_model')}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# D4 — Snippet truncation: _clean_citations applied before validate_output
+# ---------------------------------------------------------------------------
+
+class TestSnippetTruncationBeforeValidation:
+    """_clean_citations truncates snippets >300 chars before schema validation."""
+
+    def test_long_snippet_truncated_by_clean_citations(self) -> None:
+        """Snippet >300 chars in a payload is truncated to ≤300 after _clean_citations."""
+        from app.app import _clean_citations
+        long_snippet = "A " * 200  # 400 chars
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"] = long_snippet
+        result = _clean_citations(payload)
+        snippet = result["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"]
+        assert len(snippet) <= 300, f"Snippet not truncated: {len(snippet)} chars"
+
+    def test_clean_citations_allows_subsequent_validate_to_pass(self) -> None:
+        """A payload with snippet >300 chars fails validation but passes after _clean_citations."""
+        from app.app import _clean_citations
+        long_snippet = "Evidence shows improvement. " * 15  # >300 chars
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"] = long_snippet
+        # Raw payload must fail schema validation (maxLength: 300)
+        with pytest.raises(Exception):
+            validate_output(payload, SCHEMA)
+        # After _clean_citations, it must pass
+        cleaned = _clean_citations(payload)
+        validate_output(cleaned, SCHEMA)  # must not raise
+
+    def test_short_snippet_unchanged_by_clean_citations(self) -> None:
+        """Snippets ≤300 chars are not modified by _clean_citations."""
+        from app.app import _clean_citations
+        snippet = "Short evidence snippet."
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"] = snippet
+        result = _clean_citations(payload)
+        result_snippet = result["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"]
+        assert result_snippet == snippet
+
+
+# ---------------------------------------------------------------------------
+# D7 — Expanded barrier keywords: lacking, without, absence of, insufficient
+# ---------------------------------------------------------------------------
+
+class TestExpandedBarrierKeywords:
+    """New barrier framing keywords accepted in operational_barriers snippets."""
+
+    def _make_barrier_payload(self, snippet: str) -> dict:
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        item = {
+            "item_id": "bar_001",
+            "title": "Barrier Item",
+            "statement": "This is a barrier.",
+            "evidence_type": "determinant_mechanism",
+            "evidence_strength": "moderate",
+            "citations": [{
+                "doc_id": "SRC1",
+                "source_title": "Vallieres et al. BMC Health Services Research 2018",
+                "locator": "p.1",
+                "snippet": snippet,
+            }],
+        }
+        payload["domains"][0]["focus_areas"][0]["operational_barriers"] = [item]
+        return payload
+
+    def test_lacking_keyword_accepted(self) -> None:
+        """Snippet with 'lacking' passes barrier framing validation."""
+        payload = self._make_barrier_payload("Lacking sufficient supervisors, attendance monitoring failed.")
+        validate_output(payload, SCHEMA)  # must not raise
+
+    def test_without_keyword_accepted(self) -> None:
+        """Snippet with 'without' passes barrier framing validation."""
+        payload = self._make_barrier_payload("Without reliable IT infrastructure, reporting was impossible.")
+        validate_output(payload, SCHEMA)
+
+    def test_absence_of_keyword_accepted(self) -> None:
+        """Snippet with 'absence of' passes barrier framing validation."""
+        payload = self._make_barrier_payload("The absence of reliable transport limited supervisory visits.")
+        validate_output(payload, SCHEMA)
+
+    def test_insufficient_keyword_accepted(self) -> None:
+        """Snippet with 'insufficient' passes barrier framing validation."""
+        payload = self._make_barrier_payload("Insufficient funding prevented scale-up of the programme.")
+        validate_output(payload, SCHEMA)
+
+
+# ---------------------------------------------------------------------------
+# CITATIONS sheet: 5 columns + snippet ≤300 enforcement
+# ---------------------------------------------------------------------------
+
+class TestCitationsSheetLeanStructure:
+    """CITATIONS sheet has 5 columns and enforces snippet ≤300."""
+
+    def test_citations_snippet_truncated_at_300_in_citations_sheet(self) -> None:
+        """Snippets >300 chars in source items are truncated in the CITATIONS sheet."""
+        payload = copy.deepcopy(VALID_PAYLOAD)
+        long_snip = "Evidence text. " * 25  # >300 chars
+        payload["domains"][0]["focus_areas"][0]["proven_interventions"][0]["citations"][0]["snippet"] = long_snip
+        wb = _render_to_wb(payload)
+        ws2 = wb["CITATIONS"]
+        snippets = [row[4] for row in ws2.iter_rows(min_row=2, values_only=True) if row[4]]
+        for snip in snippets:
+            assert len(str(snip)) <= 300, f"CITATIONS sheet snippet exceeds 300 chars: {len(str(snip))}"
+
+    def test_citations_iid_matches_menu_iid(self) -> None:
+        """Intervention IDs in CITATIONS exactly match those in MENU (5-col linkage)."""
+        wb = _render_to_wb(copy.deepcopy(VALID_PAYLOAD))
+        menu_ids = {row[0] for row in wb["MENU"].iter_rows(min_row=2, values_only=True) if row[0]}
+        cit_ids = {row[0] for row in wb["CITATIONS"].iter_rows(min_row=2, values_only=True) if row[0]}
+        assert cit_ids.issubset(menu_ids), f"CITATIONS IIDs not a subset of MENU IIDs: {cit_ids - menu_ids}"

@@ -1,11 +1,63 @@
 from __future__ import annotations
 
 import os
+import random
 import time
 from dataclasses import dataclass
 from typing import Optional
 
-from openai import OpenAI, RateLimitError
+from openai import APIConnectionError, OpenAI, RateLimitError
+
+
+# ---------------------------------------------------------------------------
+# Adaptive rate-limit constants (all env-overridable)
+# ---------------------------------------------------------------------------
+
+def _rl_base() -> float:
+    return float(os.getenv("HRH_RL_BACKOFF_BASE_SECONDS", "1.0"))
+
+
+def _rl_max() -> float:
+    return float(os.getenv("HRH_RL_BACKOFF_MAX_SECONDS", "30.0"))
+
+
+def _rl_jitter() -> float:
+    return float(os.getenv("HRH_RL_JITTER_SECONDS", "1.0"))
+
+
+def _rl_max_retries() -> int:
+    return int(os.getenv("HRH_RL_MAX_RETRIES", "5"))
+
+
+def _soft_rps() -> Optional[float]:
+    """If HRH_SOFT_RPS is set, return requests-per-second limit; else None (disabled)."""
+    v = os.getenv("HRH_SOFT_RPS", "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def _extract_retry_after(exc: RateLimitError) -> Optional[float]:
+    """Return server-requested wait in seconds from response headers, or None."""
+    try:
+        headers = exc.response.headers  # type: ignore[attr-defined]
+        ra = headers.get("Retry-After", "").strip()
+        if ra.isdigit():
+            return float(ra)
+        # x-ratelimit-reset-requests / x-ratelimit-reset-tokens: "1.5s", "60s"
+        for hdr in ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"):
+            val = headers.get(hdr, "").strip().rstrip("s")
+            if val:
+                try:
+                    return float(val)
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return None
 
 
 @dataclass(frozen=True)
@@ -80,7 +132,12 @@ def generate_json(
         f"n_excerpts={excerpts_str} total_chars={chars_str}"
     )
 
-    max_retries = 5
+    # Optional soft RPS throttle: tiny pre-call sleep to smooth burst traffic.
+    _rps = _soft_rps()
+    if _rps and _rps > 0:
+        time.sleep(1.0 / _rps)
+
+    max_retries = _rl_max_retries()
     for retry in range(max_retries):
         try:
             resp = client.chat.completions.create(
@@ -92,12 +149,20 @@ def generate_json(
                 response_format={"type": "json_object"},
                 **extra_kwargs,
             )
-            break
+            break  # success — no sleep
         except RateLimitError as e:
             if retry == max_retries - 1:
                 raise
-            wait = min(2 ** retry * 30, 120)  # 30s, 60s, 120s, 120s
-            print(f"  Rate limited, waiting {wait}s before retry ({retry + 1}/{max_retries})...")
+            wait = _extract_retry_after(e)
+            if wait is None:
+                wait = min(_rl_base() * (2 ** retry), _rl_max()) + random.uniform(0, _rl_jitter())
+            print(f"  [RATE LIMIT] 429; sleeping {wait:.1f}s (attempt {retry + 1}/{max_retries})")
+            time.sleep(wait)
+        except APIConnectionError as e:
+            if retry == max_retries - 1:
+                raise
+            wait = min(1.0 * (2 ** retry), 16.0) + random.uniform(0, 0.5)
+            print(f"  [CONN ERROR] {type(e).__name__}; sleeping {wait:.1f}s (attempt {retry + 1}/{max_retries})")
             time.sleep(wait)
 
     # Log token usage

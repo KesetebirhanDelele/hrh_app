@@ -163,7 +163,8 @@ def _validate_domain_lessons_item_id_uniqueness(payload: Dict[str, Any], schema_
 # Keywords that signal genuine implementation-barrier framing (case-insensitive substring match).
 # Kept deliberately narrow to avoid false positives while catching causal/statistical framings.
 _OB_BARRIER_KEYWORDS = (
-    "lack of", "inadequate", "barrier", "constraint", "difficulty",
+    "lack of", "lacking", "without", "absence of", "insufficient",
+    "inadequate", "barrier", "constraint", "difficulty",
     "hurdle", "challenge", "shortage",
 )
 
@@ -308,6 +309,36 @@ def _validate_domain_lessons_impact_snippets(payload: Dict[str, Any], schema_fil
                 )
 
 
+def _validate_proven_interventions_are_actions(payload: Dict[str, Any], schema_file: Path) -> None:
+    """proven_interventions must not contain items with evidence_type=determinant_mechanism.
+
+    Such items describe causes, correlates, or barriers — not implementable actions.
+    They should be placed in lessons_learnt, operational_barriers, or consequences_impacts.
+    """
+    for domain in payload.get("domains", []):
+        d_id = domain.get("domain_id", "?")
+        for fa in domain.get("focus_areas", []):
+            fa_id = fa.get("focus_area_id", "?")
+            bad: list[str] = []
+            for item in fa.get("proven_interventions", []):
+                if item.get("evidence_type") == "determinant_mechanism":
+                    bad.append(item.get("item_id", "?"))
+            if bad:
+                raise SchemaValidationError(
+                    schema_path=str(schema_file),
+                    message=(
+                        f"proven_interventions items in domain='{d_id}', focus_area='{fa_id}' "
+                        f"have evidence_type='determinant_mechanism' — these describe causes or "
+                        f"barriers, not implementable actions. Move them to lessons_learnt, "
+                        f"operational_barriers, or consequences_impacts."
+                    ),
+                    errors=[
+                        f"Item '{iid}' has evidence_type='determinant_mechanism' but is in proven_interventions"
+                        for iid in bad
+                    ],
+                )
+
+
 def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optional[str] = None) -> None:
     """
     Validate an output payload against a JSON Schema (Draft 2020-12).
@@ -350,6 +381,7 @@ def validate_output(payload: Dict[str, Any], schema_path: str, base_dir: Optiona
 
     if payload.get("job_id") == "domain_lessons_option_b":
         _validate_domain_lessons_item_id_uniqueness(payload, schema_file)
+        _validate_proven_interventions_are_actions(payload, schema_file)
         _validate_domain_lessons_barrier_snippets(payload, schema_file)
         _validate_domain_lessons_impact_snippets(payload, schema_file)
 
