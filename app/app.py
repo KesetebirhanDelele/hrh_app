@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import sys
 from pathlib import Path
+
+# pdfminer emits "CropBox missing from /Page, defaulting to MediaBox" for many
+# PDFs that omit the optional CropBox key. This is harmless — extraction is
+# unaffected — so suppress it to keep scan output readable.
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 from app.core.validators import SchemaValidationError, validate_output
 from app.jobs.executor import run_job_stub
