@@ -21,23 +21,33 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools.hrh_compendium_builder import (
     DOMAIN_KEYWORDS,
+    PACKAGE_KEYWORDS,
     PROBLEM_KEYWORDS,
     REQUIRED_COLS,
     STRENGTH_ORDER,
+    _agglom_labels,
     _classify_by_keywords,
+    _consolidate_if_oversized,
     _extract_country,
     _infer_mechanism,
     _keyword_similarity,
     _merge_bullets,
+    _score_package,
+    _strip_country_refs,
     _strongest_evidence,
     _text_for_embedding,
     aggregate_cluster,
     assign_clusters,
+    assign_packages,
     build_evidence_map,
     cluster_batch,
     compute_embeddings,
+    deduplicate_canonical_names,
+    filter_chw_relevant,
+    is_relevant_to_chw,
     load_data,
     score_transferability,
+    validate_structure,
     write_excel,
     write_word,
 )
@@ -605,40 +615,30 @@ class TestFullPipeline:
             }))
         return pd.DataFrame(rows).fillna("")
 
-    def test_pipeline_produces_compendium_rows(self, tmp_path):
+    def _run(self, tmp_path, n: int):
         from tools.hrh_compendium_builder import run_pipeline
-        df = self._make_varied_df(20)
-        in_path = tmp_path / "input" / "interventions.xlsx"
-        in_path.parent.mkdir(parents=True)
-        df.to_excel(in_path, index=False)
-
-        run_pipeline(in_path, tmp_path / "output")
-
-        xl = pd.ExcelFile(tmp_path / "output" / "HRH_Compendium.xlsx")
-        comp = pd.read_excel(xl, sheet_name="Compendium")
-        assert len(comp) > 0
-
-    def test_pipeline_produces_word_doc(self, tmp_path):
-        from tools.hrh_compendium_builder import run_pipeline
-        df = self._make_varied_df(10)
-        in_path = tmp_path / "input" / "interventions.xlsx"
-        in_path.parent.mkdir(parents=True)
-        df.to_excel(in_path, index=False)
-
-        run_pipeline(in_path, tmp_path / "output")
-        assert (tmp_path / "output" / "HRH_Compendium.docx").exists()
-
-    def test_evidence_map_rows_equal_input_rows(self, tmp_path):
-        from tools.hrh_compendium_builder import run_pipeline
-        n = 15
         df = self._make_varied_df(n)
         in_path = tmp_path / "input" / "interventions.xlsx"
         in_path.parent.mkdir(parents=True)
         df.to_excel(in_path, index=False)
-
         run_pipeline(in_path, tmp_path / "output")
+        xlsx = list((tmp_path / "output").glob("HRH_Compendium_*.xlsx"))[0]
+        docx = list((tmp_path / "output").glob("HRH_Compendium_*.docx"))[0]
+        return xlsx, docx
 
-        ev = pd.read_excel(tmp_path / "output" / "HRH_Compendium.xlsx", sheet_name="Evidence_Map")
+    def test_pipeline_produces_compendium_rows(self, tmp_path):
+        xlsx, _ = self._run(tmp_path, 20)
+        comp = pd.read_excel(xlsx, sheet_name="Compendium")
+        assert len(comp) > 0
+
+    def test_pipeline_produces_word_doc(self, tmp_path):
+        _, docx = self._run(tmp_path, 10)
+        assert docx.exists()
+
+    def test_evidence_map_rows_equal_input_rows(self, tmp_path):
+        n = 15
+        xlsx, _ = self._run(tmp_path, n)
+        ev = pd.read_excel(xlsx, sheet_name="Evidence_Map")
         assert len(ev) == n
 
     def test_no_hallucinated_evidence_in_output(self, tmp_path):
@@ -651,7 +651,438 @@ class TestFullPipeline:
 
         run_pipeline(in_path, tmp_path / "output")
 
-        comp = pd.read_excel(tmp_path / "output" / "HRH_Compendium.xlsx", sheet_name="Compendium")
+        # find the timestamped xlsx
+        xlsx_files = list((tmp_path / "output").glob("HRH_Compendium_*.xlsx"))
+        assert len(xlsx_files) == 1
+        comp = pd.read_excel(xlsx_files[0], sheet_name="Compendium")
         for _, row in comp.iterrows():
             ev = str(row.get("Evidence_Summary", ""))
             assert ev  # not blank
+
+    def test_output_filenames_are_timestamped(self, tmp_path):
+        from tools.hrh_compendium_builder import run_pipeline
+        df = self._make_varied_df(5)
+        in_path = tmp_path / "input" / "interventions.xlsx"
+        in_path.parent.mkdir(parents=True)
+        df.to_excel(in_path, index=False)
+        run_pipeline(in_path, tmp_path / "output")
+        xlsx_files = list((tmp_path / "output").glob("HRH_Compendium_*.xlsx"))
+        docx_files = list((tmp_path / "output").glob("HRH_Compendium_*.docx"))
+        assert len(xlsx_files) == 1
+        assert len(docx_files) == 1
+        # timestamp pattern: MMDDYYYY_HHMMSS
+        import re
+        assert re.search(r"\d{8}_\d{6}", xlsx_files[0].name)
+
+
+# ---------------------------------------------------------------------------
+# Step 7 — assign_packages
+# ---------------------------------------------------------------------------
+
+class TestAssignPackages:
+    def _make_compendium(self, n: int = 6) -> pd.DataFrame:
+        df = _make_df(n=n)
+        df = assign_clusters(df, batch_size=n)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        return pd.DataFrame(rows)
+
+    def test_adds_intervention_package_column(self):
+        comp = self._make_compendium()
+        result = assign_packages(comp)
+        assert "Intervention_Package" in result.columns
+
+    def test_every_row_has_a_package(self):
+        comp = self._make_compendium(8)
+        result = assign_packages(comp)
+        assert result["Intervention_Package"].notna().all()
+        assert (result["Intervention_Package"] != "").all()
+
+    def test_package_count_per_domain_does_not_exceed_8(self):
+        # Create a large compendium spanning one domain
+        rows = []
+        for i in range(20):
+            r = _make_row(**{
+                "Intervention ID": f"INT-{i:03d}",
+                "Title": f"Intervention {i}",
+                "HRH-II Package Component": "Motivation & Accountability",
+                "Description": f"A unique intervention about topic {i}.",
+            })
+            rows.append(r)
+        df = pd.DataFrame(rows).fillna("")
+        df = assign_clusters(df, batch_size=20)
+        canon = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                 for cid, g in df.groupby("_cluster")]
+        comp = pd.DataFrame(canon)
+        comp["Table3_Domain"] = "Motivation & Accountability"
+        result = assign_packages(comp)
+        for domain, grp in result.groupby("Table3_Domain"):
+            assert grp["Intervention_Package"].nunique() <= 8
+
+    def test_financial_incentive_keywords_map_to_correct_package(self):
+        """Row whose text contains 'incentive' → Financial Incentive Systems."""
+        row = {
+            "Canonical_Intervention": "Financial Incentive Scheme",
+            "Description": "Performance-based financial incentives and bonus payments.",
+            "Mechanism": "Incentives align behaviour",
+            "Table3_Domain": "Motivation & Accountability",
+            "Intervention_Family": "M&A",
+            "Problem_Addressed": "Absenteeism",
+            "Evidence_Summary": "x",
+            "Strength_of_Evidence": "moderate",
+            "Evidence_Types": "RCT",
+            "Implementation_Considerations": "• Requires payment system",
+            "Expected_Impact": "Improved attendance",
+            "Transferability": "High",
+            "Transferability_Rationale": "x",
+            "_cluster_id": 0,
+            "_intervention_ids": "INT-001",
+            "_references": "Smith 2020",
+            "_variant_titles": ["Financial Incentive Scheme"],
+        }
+        comp = pd.DataFrame([row])
+        result = assign_packages(comp)
+        assert result.iloc[0]["Intervention_Package"] == "Financial Incentive Systems"
+
+    def test_unmatched_text_gets_fallback_package(self):
+        score = _score_package("completely unrelated text about nothing", {
+            "Package A": ["specific_keyword_xyz"],
+        })
+        from tools.hrh_compendium_builder import _FALLBACK_PACKAGE
+        assert score == _FALLBACK_PACKAGE
+
+
+# ---------------------------------------------------------------------------
+# Step 10 — validate_structure
+# ---------------------------------------------------------------------------
+
+class TestValidateStructure:
+    def _valid_compendium(self) -> pd.DataFrame:
+        df = _make_df(n=4)
+        df = assign_clusters(df, batch_size=4)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        comp = pd.DataFrame(rows)
+        return assign_packages(comp)
+
+    def test_passes_for_valid_compendium(self):
+        comp = self._valid_compendium()
+        validate_structure(comp)  # should not raise
+
+    def test_raises_on_duplicate_canonical_names(self):
+        comp = self._valid_compendium()
+        # Force a duplicate
+        comp = pd.concat([comp, comp.iloc[[0]]], ignore_index=True)
+        with pytest.raises(ValueError, match="Duplicate"):
+            validate_structure(comp)
+
+    # --- deduplicate_canonical_names ---
+
+    def test_deduplicate_leaves_unique_names_unchanged(self):
+        df = pd.DataFrame({"Canonical_Intervention": ["A", "B", "C"]})
+        result = deduplicate_canonical_names(df)
+        assert list(result["Canonical_Intervention"]) == ["A", "B", "C"]
+
+    def test_deduplicate_appends_counter_to_duplicates(self):
+        df = pd.DataFrame({"Canonical_Intervention": ["A", "A", "A"]})
+        result = deduplicate_canonical_names(df)
+        assert list(result["Canonical_Intervention"]) == ["A", "A (2)", "A (3)"]
+
+    def test_deduplicate_does_not_modify_first_occurrence(self):
+        df = pd.DataFrame({"Canonical_Intervention": ["Title", "Title", "Other"]})
+        result = deduplicate_canonical_names(df)
+        assert result.iloc[0]["Canonical_Intervention"] == "Title"
+        assert result.iloc[1]["Canonical_Intervention"] == "Title (2)"
+        assert result.iloc[2]["Canonical_Intervention"] == "Other"
+
+    def test_after_deduplication_validation_passes(self):
+        df = pd.DataFrame({"Canonical_Intervention": ["X", "X"]})
+        deduped = deduplicate_canonical_names(df)
+        # Add the minimum columns validate_structure needs
+        deduped["Intervention_Package"] = "Pkg A"
+        deduped["Table3_Domain"] = "Enabling Environment"
+        validate_structure(deduped)  # should not raise
+
+    def test_raises_when_package_column_missing(self):
+        comp = self._valid_compendium().drop(columns=["Intervention_Package"])
+        with pytest.raises(ValueError, match="Intervention_Package column missing"):
+            validate_structure(comp)
+
+    def test_warns_when_package_count_exceeds_10(self, capsys):
+        # Build a compendium where one domain has 11 distinct packages.
+        # Construct directly so we control the exact package assignments.
+        rows = [
+            {
+                "Canonical_Intervention": f"Intervention {i}",
+                "Intervention_Package": f"Package {i}",  # 11 distinct packages
+                "Table3_Domain": "Motivation & Accountability",
+                "Problem_Addressed": "Absenteeism",
+            }
+            for i in range(11)
+        ]
+        comp = pd.DataFrame(rows)
+        validate_structure(comp)  # should not raise, only warn
+        captured = capsys.readouterr()
+        assert "WARN" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Step 8 — Word doc 3-level hierarchy
+# ---------------------------------------------------------------------------
+
+class TestWriteWordHierarchy:
+    def _make_compendium_with_packages(self, n: int = 6) -> pd.DataFrame:
+        df = _make_df(n=n)
+        df = assign_clusters(df, batch_size=n)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        comp = pd.DataFrame(rows)
+        return assign_packages(comp)
+
+    def test_heading_levels_include_package(self, tmp_path):
+        comp = self._make_compendium_with_packages(6)
+        out = tmp_path / "test.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        heading_styles = [p.style.name for p in doc.paragraphs if p.style.name.startswith("Heading")]
+        # Should have Heading 1, 2, and 3
+        assert "Heading 1" in heading_styles
+        assert "Heading 2" in heading_styles
+        assert "Heading 3" in heading_styles
+
+    def test_no_duplicate_canonical_in_word(self, tmp_path):
+        comp = self._make_compendium_with_packages(4)
+        out = tmp_path / "test.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        h3_texts = [p.text for p in doc.paragraphs if p.style.name == "Heading 3"]
+        assert len(h3_texts) == len(set(h3_texts))
+
+    def test_variants_section_present_when_multiple_titles(self, tmp_path):
+        """Cluster with >1 title should produce a Variants / Examples paragraph."""
+        row = score_transferability(aggregate_cluster(
+            _make_df(n=3).assign(**{
+                "Title": ["Title A", "Title B", "Title C"],
+                "Description": ["Incentive reward bonus payment"] * 3,
+            }),
+            cluster_id=0,
+        ))
+        comp = pd.DataFrame([row])
+        comp = assign_packages(comp)
+        out = tmp_path / "test.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        texts = [p.text for p in doc.paragraphs]
+        assert any("Variants" in t for t in texts)
+
+
+# ---------------------------------------------------------------------------
+# CHW scope filter
+# ---------------------------------------------------------------------------
+
+class TestIsRelevantToChw:
+    def _row(self, title="", desc="", cadre="", component=""):
+        return pd.Series({
+            "Title": title, "Description": desc,
+            "Target cadre & setting": cadre,
+            "HRH-II Package Component": component,
+        })
+
+    def test_chw_in_title_includes(self):
+        assert is_relevant_to_chw(self._row(title="CHW incentive programme"))
+
+    def test_community_health_worker_in_desc_includes(self):
+        assert is_relevant_to_chw(self._row(desc="Interventions for community health workers in rural areas."))
+
+    def test_hew_in_cadre_includes(self):
+        assert is_relevant_to_chw(self._row(cadre="Health extension workers (HEWs) in Ethiopia"))
+
+    def test_health_extension_in_desc_includes(self):
+        assert is_relevant_to_chw(self._row(desc="The health extension programme focused on rural villages."))
+
+    def test_supportive_supervision_includes(self):
+        assert is_relevant_to_chw(self._row(title="Supportive supervision of community health supervisors"))
+
+    def test_physician_focus_excludes(self):
+        assert not is_relevant_to_chw(self._row(
+            title="Physician specialist training",
+            desc="Medical specialist physicians received tertiary care training.",
+        ))
+
+    def test_tertiary_care_excludes(self):
+        assert not is_relevant_to_chw(self._row(
+            desc="Tertiary hospital surgical ward specialist pharmacist protocols."
+        ))
+
+    def test_nurse_with_community_context_includes(self):
+        assert is_relevant_to_chw(self._row(
+            desc="Community nurses supervised CHW clusters in primary health settings."
+        ))
+
+    def test_empty_row_includes_by_default(self):
+        assert is_relevant_to_chw(self._row())
+
+
+class TestFilterChwRelevant:
+    def test_returns_dataframe(self):
+        df = _make_df(n=5)
+        result = filter_chw_relevant(df)
+        assert isinstance(result, pd.DataFrame)
+
+    def test_removes_non_chw_rows(self):
+        rows = [
+            {**{c: "" for c in _make_row().keys()},
+             "Title": "CHW incentive programme",
+             "Description": "Community health workers received performance bonuses.",
+             "Target cadre & setting": "CHWs in rural areas",
+             "HRH-II Package Component": "Motivation"},
+            {**{c: "" for c in _make_row().keys()},
+             "Title": "Physician specialist training",
+             "Description": "Medical specialist physicians at tertiary hospital surgical ward.",
+             "Target cadre & setting": "Hospital physicians",
+             "HRH-II Package Component": "Tertiary care"},
+        ]
+        df = pd.DataFrame(rows).fillna("")
+        result = filter_chw_relevant(df)
+        assert len(result) < len(df)
+        assert any("CHW" in str(r["Title"]) for _, r in result.iterrows())
+
+    def test_index_reset_after_filter(self):
+        df = _make_df(n=4)
+        result = filter_chw_relevant(df)
+        assert list(result.index) == list(range(len(result)))
+
+    def test_all_chw_rows_kept(self):
+        df = _make_df(n=4)  # all rows have CHW-like content from fixture
+        result = filter_chw_relevant(df)
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# Description country-stripping
+# ---------------------------------------------------------------------------
+
+class TestStripCountryRefs:
+    def test_removes_ethiopia(self):
+        result = _strip_country_refs("In Ethiopia, performance incentives were used.")
+        assert "Ethiopia" not in result
+        assert "the country" in result
+
+    def test_removes_multiple_countries(self):
+        result = _strip_country_refs("Studies in Kenya and Uganda showed improvement.")
+        assert "Kenya" not in result
+        assert "Uganda" not in result
+
+    def test_leaves_non_country_text_unchanged(self):
+        text = "Supervision reduced absenteeism by 30%."
+        assert _strip_country_refs(text) == text
+
+    def test_case_insensitive(self):
+        result = _strip_country_refs("ETHIOPIA rural health workers improved attendance.")
+        assert "ETHIOPIA" not in result
+
+
+# ---------------------------------------------------------------------------
+# Global clustering
+# ---------------------------------------------------------------------------
+
+class TestAssignClustersGlobal:
+    def test_small_df_uses_fixed_threshold(self):
+        """n <= target_max → fixed threshold, no binary search."""
+        df = _make_df(n=5)
+        result = assign_clusters(df, target_min=80, target_max=120)
+        assert "_cluster" in result.columns
+        assert (result["_cluster"] >= 0).all()
+
+    def test_large_df_targets_range(self):
+        """n > target_max → binary search tries to land in [target_min, target_max]."""
+        # Build 200 rows with mixed content so clustering can find groups
+        topics = [
+            "Community health worker incentive bonus payment",
+            "Supportive supervision mentoring coaching visits",
+            "Training capacity skill workshop education",
+            "Data monitoring dashboard HRIS reporting",
+        ]
+        rows = [_make_row(**{
+            "Intervention ID": f"INT-{i:03d}",
+            "Title": topics[i % 4],
+            "Description": topics[i % 4] + f" variant {i}",
+        }) for i in range(200)]
+        df = pd.DataFrame(rows).fillna("")
+        result = assign_clusters(df, target_min=2, target_max=10)
+        n_clusters = result["_cluster"].nunique()
+        # Should be somewhere close to the target
+        assert 1 <= n_clusters <= 50  # generous bound for test stability
+
+    def test_all_rows_get_cluster(self):
+        df = _make_df(n=10)
+        result = assign_clusters(df, target_min=80, target_max=120)
+        assert (result["_cluster"] >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# Variants_List in aggregate output
+# ---------------------------------------------------------------------------
+
+class TestVariantsList:
+    def test_variants_list_present_in_aggregate(self):
+        df = _make_df(n=3)
+        result = aggregate_cluster(df, cluster_id=0)
+        assert "Variants_List" in result
+
+    def test_variants_list_contains_original_titles(self):
+        rows = [_make_row(**{"Title": f"Title {c}", "Intervention ID": f"INT-{c}"})
+                for c in ["A", "B", "C"]]
+        df = pd.DataFrame(rows).fillna("")
+        result = aggregate_cluster(df, cluster_id=0)
+        vl = result["Variants_List"]
+        assert "Title A" in vl
+        assert "Title B" in vl
+
+    def test_variants_list_in_excel_output(self, tmp_path):
+        df = _make_df(n=3)
+        df = assign_clusters(df, batch_size=3)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        comp = pd.DataFrame(rows)
+        comp = assign_packages(comp)
+        ev = build_evidence_map(df, comp)
+        out = tmp_path / "test.xlsx"
+        write_excel(comp, ev, out)
+        result = pd.read_excel(out, sheet_name="Compendium")
+        assert "Variants_List" in result.columns
+
+
+# ---------------------------------------------------------------------------
+# Consolidation
+# ---------------------------------------------------------------------------
+
+class TestConsolidateIfOversized:
+    def _make_large_compendium(self, n: int) -> pd.DataFrame:
+        df = _make_df(n=n)
+        df = assign_clusters(df, batch_size=n)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        return pd.DataFrame(rows)
+
+    def test_small_compendium_unchanged(self):
+        comp = self._make_large_compendium(5)
+        result = _consolidate_if_oversized(comp, max_count=200)
+        assert len(result) == len(comp)
+
+    def test_oversized_compendium_reduced(self):
+        # Build a compendium with 20 rows; set max_count=5 to force consolidation
+        comp = self._make_large_compendium(10)
+        if len(comp) > 5:
+            result = _consolidate_if_oversized(comp, max_count=5, target_min=2, target_max=4)
+            assert len(result) < len(comp)
+
+    def test_variants_list_merged_after_consolidation(self):
+        comp = self._make_large_compendium(8)
+        result = _consolidate_if_oversized(comp, max_count=2, target_min=1, target_max=2)
+        # Every row in result should have a non-empty Variants_List
+        if len(result) < len(comp):
+            assert result["Variants_List"].notna().all()
