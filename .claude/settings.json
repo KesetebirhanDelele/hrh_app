@@ -2,6 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(head -5 schemas/*.json)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\keset\\OneDrive\\Documents\\Alula\\HRH\\hrh_app"
     ]
   }
 }
