@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(head -5 schemas/*.json)"
+      "Bash(head -5 schemas/*.json)",
+      "Read(//mnt/c/Users/keset/Documents/lead-conversion-optimizer/**)",
+      "Read(//c/Users/keset/Documents/**)",
+      "Read(//c/Users/keset/OneDrive/Documents/**)",
+      "Bash(find c:/Users/keset/Documents -type d -name *dashboard* -o -type d -name *app* -o -type d -name *frontend*)",
+      "Bash(find c:/Users/keset/Documents c:/Users/keset/OneDrive/Documents -type f \\\\\\(-name *.html -o -name *.js -o -name *.tsx -o -name *.jsx \\\\\\))",
+      "Bash(grep -r intent 'c:/Users/keset/OneDrive/Documents/Cory Notes/Cora Workflows' --include=*.sql --include=*.py)",
+      "Bash(grep -r outcome 'c:/Users/keset/OneDrive/Documents/Cory Notes/Cora Workflows' --include=*.sql --include=*.py)",
+      "Bash(find c:/Users/keset/Documents -name *.py -o -name *.js -o -name *.ts -o -name *.tsx)",
+      "Bash(find c:/Users/keset/Documents -maxdepth 3 -type d \\\\\\(-name dashboard* -o -name frontend* -o -name app* -o -name ui* \\\\\\))"
     ],
     "additionalDirectories": [
       "c:\\Users\\keset\\OneDrive\\Documents\\Alula\\HRH\\hrh_app"

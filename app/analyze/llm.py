@@ -88,7 +88,7 @@ def generate_json(
     Env vars:
       - HRH_LLM_PROVIDER: must be 'openai' for now
       - OPENAI_API_KEY: required
-      - HRH_OPENAI_MODEL: optional (default: gpt-4o-mini)
+      - HRH_OPENAI_MODEL: optional (default: gpt-5.3)
     """
     provider = (provider or os.getenv("HRH_LLM_PROVIDER", "")).strip().lower()
     if not provider:
@@ -101,7 +101,7 @@ def generate_json(
     if not api_key:
         raise LLMNotConfigured("Missing OPENAI_API_KEY. Set it in your environment.")
 
-    model = model or os.getenv("HRH_OPENAI_MODEL", "gpt-4o")
+    model = model or os.getenv("HRH_OPENAI_MODEL", "gpt-5.3")
 
     client = OpenAI(api_key=api_key)
 

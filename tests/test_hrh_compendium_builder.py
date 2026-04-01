@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools.hrh_compendium_builder import (
     DOMAIN_KEYWORDS,
+    FORCE_MERGE_RULES,
     PACKAGE_KEYWORDS,
     PROBLEM_KEYWORDS,
     REQUIRED_COLS,
@@ -28,15 +29,18 @@ from tools.hrh_compendium_builder import (
     _agglom_labels,
     _classify_by_keywords,
     _consolidate_if_oversized,
+    _drop_general_interventions_package,
     _extract_country,
     _infer_mechanism,
     _keyword_similarity,
     _merge_bullets,
+    _merge_canonical_rows,
     _score_package,
     _strip_country_refs,
     _strongest_evidence,
     _text_for_embedding,
     aggregate_cluster,
+    apply_force_merges,
     assign_clusters,
     assign_packages,
     build_evidence_map,
@@ -46,6 +50,7 @@ from tools.hrh_compendium_builder import (
     filter_chw_relevant,
     is_relevant_to_chw,
     load_data,
+    recheck_chw_canonical,
     score_transferability,
     validate_structure,
     write_excel,
@@ -860,8 +865,8 @@ class TestWriteWordHierarchy:
         h3_texts = [p.text for p in doc.paragraphs if p.style.name == "Heading 3"]
         assert len(h3_texts) == len(set(h3_texts))
 
-    def test_variants_section_present_when_multiple_titles(self, tmp_path):
-        """Cluster with >1 title should produce a Variants / Examples paragraph."""
+    def test_variants_section_not_in_word(self, tmp_path):
+        """Variants / Examples must NOT appear in Word output (Excel only)."""
         row = score_transferability(aggregate_cluster(
             _make_df(n=3).assign(**{
                 "Title": ["Title A", "Title B", "Title C"],
@@ -876,7 +881,103 @@ class TestWriteWordHierarchy:
         from docx import Document as D
         doc = D(out)
         texts = [p.text for p in doc.paragraphs]
-        assert any("Variants" in t for t in texts)
+        assert not any("Variants" in t for t in texts)
+
+    def _word_bullets(self, tmp_path, row_overrides: dict, filename="test.docx"):
+        row = score_transferability(aggregate_cluster(_make_df(n=2), cluster_id=0))
+        row.update(row_overrides)
+        comp = assign_packages(pd.DataFrame([row]))
+        out = tmp_path / filename
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        return [p.text for p in doc.paragraphs if p.style.name == "List Bullet"]
+
+    def test_multiple_evidence_sentences_rendered_as_bullets(self, tmp_path):
+        """Multiple |-separated evidence sentences must each become a List Bullet."""
+        bullets = self._word_bullets(
+            tmp_path,
+            {"Evidence_Summary": "First finding. | Second finding. | Third finding."},
+            filename="ev_multi.docx",
+        )
+        assert "First finding." in bullets
+        assert "Second finding." in bullets
+        assert "Third finding." in bullets
+
+    def test_single_evidence_sentence_not_bulleted(self, tmp_path):
+        """A single evidence sentence is rendered inline, not as a bullet."""
+        row = score_transferability(aggregate_cluster(_make_df(n=2), cluster_id=0))
+        row["Evidence_Summary"] = "Only one finding."
+        comp = assign_packages(pd.DataFrame([row]))
+        out = tmp_path / "ev_single.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        bullets = [p.text for p in doc.paragraphs if p.style.name == "List Bullet"]
+        assert "Only one finding." not in bullets
+        plain = [p.text for p in doc.paragraphs]
+        assert any("Only one finding." in t for t in plain)
+
+    def test_multiple_evidence_types_rendered_as_bullets(self, tmp_path):
+        """Multiple ;-separated evidence types must each become a List Bullet."""
+        bullets = self._word_bullets(
+            tmp_path,
+            {"Evidence_Types": "RCT; Observational; Systematic Review"},
+            filename="ev_types_multi.docx",
+        )
+        assert "RCT" in bullets
+        assert "Observational" in bullets
+        assert "Systematic Review" in bullets
+
+    def test_single_evidence_type_not_bulleted(self, tmp_path):
+        """A single evidence type is rendered inline, not as a bullet."""
+        row = score_transferability(aggregate_cluster(_make_df(n=2), cluster_id=0))
+        row["Evidence_Types"] = "RCT"
+        comp = assign_packages(pd.DataFrame([row]))
+        out = tmp_path / "ev_type_single.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        bullets = [p.text for p in doc.paragraphs if p.style.name == "List Bullet"]
+        assert "RCT" not in bullets
+
+    def test_references_rendered_as_bullet_list(self, tmp_path):
+        """Each semicolon-delimited reference must appear as a separate List Bullet paragraph."""
+        row = score_transferability(aggregate_cluster(_make_df(n=2), cluster_id=0))
+        row["_references"] = "Smith 2020; Jones 2021; WHO 2019"
+        comp = assign_packages(pd.DataFrame([row]))
+        out = tmp_path / "test_refs.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        bullet_texts = [p.text for p in doc.paragraphs if p.style.name == "List Bullet"]
+        assert "Smith 2020" in bullet_texts
+        assert "Jones 2021" in bullet_texts
+        assert "WHO 2019" in bullet_texts
+
+    def test_single_reference_still_bulleted(self, tmp_path):
+        """A single reference is also rendered as a List Bullet (consistent style)."""
+        row = score_transferability(aggregate_cluster(_make_df(n=2), cluster_id=0))
+        row["_references"] = "Smith 2020"
+        comp = assign_packages(pd.DataFrame([row]))
+        out = tmp_path / "test_single_ref.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        bullet_texts = [p.text for p in doc.paragraphs if p.style.name == "List Bullet"]
+        assert "Smith 2020" in bullet_texts
+
+    def test_empty_references_no_bullet_header(self, tmp_path):
+        """When _references is empty, the References label should not appear."""
+        row = score_transferability(aggregate_cluster(_make_df(n=2), cluster_id=0))
+        row["_references"] = ""
+        comp = assign_packages(pd.DataFrame([row]))
+        out = tmp_path / "test_no_refs.docx"
+        write_word(comp, out)
+        from docx import Document as D
+        doc = D(out)
+        texts = [p.text for p in doc.paragraphs]
+        assert not any("References:" in t for t in texts)
 
 
 # ---------------------------------------------------------------------------
@@ -922,8 +1023,9 @@ class TestIsRelevantToChw:
             desc="Community nurses supervised CHW clusters in primary health settings."
         ))
 
-    def test_empty_row_includes_by_default(self):
-        assert is_relevant_to_chw(self._row())
+    def test_empty_row_excluded_by_default(self):
+        """Strict filter: no CHW signals → exclude."""
+        assert not is_relevant_to_chw(self._row())
 
 
 class TestFilterChwRelevant:
@@ -1086,3 +1188,231 @@ class TestConsolidateIfOversized:
         # Every row in result should have a non-empty Variants_List
         if len(result) < len(comp):
             assert result["Variants_List"].notna().all()
+
+
+# ---------------------------------------------------------------------------
+# Strict CHW filter — new behaviour
+# ---------------------------------------------------------------------------
+
+class TestStrictChwFilter:
+    def _row(self, title="", desc="", cadre="", component=""):
+        return pd.Series({
+            "Title": title, "Description": desc,
+            "Target cadre & setting": cadre,
+            "HRH-II Package Component": component,
+        })
+
+    def test_explicit_chw_includes(self):
+        assert is_relevant_to_chw(self._row(title="CHW incentive programme"))
+
+    def test_explicit_hew_includes(self):
+        assert is_relevant_to_chw(self._row(cadre="Health extension workers (HEWs)"))
+
+    def test_community_health_worker_in_desc_includes(self):
+        assert is_relevant_to_chw(self._row(
+            desc="Community health workers received performance-based bonuses."
+        ))
+
+    def test_supportive_supervision_includes(self):
+        assert is_relevant_to_chw(self._row(title="Supportive supervision for frontline staff"))
+
+    def test_supervision_plus_community_includes(self):
+        assert is_relevant_to_chw(self._row(
+            desc="Supervision visits were conducted in community primary health facilities."
+        ))
+
+    def test_physician_excluded(self):
+        assert not is_relevant_to_chw(self._row(
+            title="Physician specialist training",
+            desc="Medical specialist physicians at tertiary care hospital surgical ward.",
+            cadre="Hospital physicians",
+        ))
+
+    def test_general_governance_without_chw_excluded(self):
+        assert not is_relevant_to_chw(self._row(
+            title="National Health Policy Reform",
+            desc="National health policy and health sector reform for ministry of health strategy.",
+        ))
+
+    def test_general_governance_WITH_chw_included(self):
+        assert is_relevant_to_chw(self._row(
+            title="National Policy for Community Health Workers",
+            desc="Health sector reform policies targeting community health workers.",
+        ))
+
+    def test_nurse_without_community_context_excluded(self):
+        assert not is_relevant_to_chw(self._row(
+            desc="Bedside nursing care protocols for inpatient nursing staff."
+        ))
+
+    def test_nurse_with_supervision_context_included(self):
+        assert is_relevant_to_chw(self._row(
+            desc="Nurse supervisors conducted monthly visits to community health workers."
+        ))
+
+    def test_empty_row_excluded(self):
+        assert not is_relevant_to_chw(self._row())
+
+
+# ---------------------------------------------------------------------------
+# Force merge rules
+# ---------------------------------------------------------------------------
+
+class TestForceMergeRules:
+    def _make_canonical_row(self, name, desc, domain="Motivation & Accountability"):
+        return {
+            "Canonical_Intervention": name,
+            "Description": desc,
+            "Mechanism": "",
+            "Table3_Domain": domain,
+            "Intervention_Family": "Test",
+            "Problem_Addressed": "Absenteeism",
+            "Evidence_Summary": "x",
+            "Strength_of_Evidence": "moderate",
+            "Evidence_Types": "RCT",
+            "Implementation_Considerations": "x",
+            "Expected_Impact": "improved attendance",
+            "Transferability": "High",
+            "Transferability_Rationale": "x",
+            "_cluster_id": 0,
+            "_intervention_ids": "INT-001",
+            "_references": "Smith 2020",
+            "_variant_titles": [name],
+            "Variants_List": name,
+        }
+
+    def test_incentive_rows_merged_to_target(self):
+        rows = [
+            self._make_canonical_row("PBF for HEWs", "performance-based financial incentive bonus"),
+            self._make_canonical_row("Outreach Allowances", "outreach incentive allowance cash"),
+            self._make_canonical_row("Salary Bonuses", "salary bonus payment financial reward"),
+        ]
+        comp = pd.DataFrame(rows)
+        result, merged = apply_force_merges(comp)
+        targets = result["Canonical_Intervention"].tolist()
+        assert "Financial Incentive Systems for CHWs" in targets
+        assert merged == 2  # 3 rows → 1, so 2 absorbed
+
+    def test_supervision_rows_merged(self):
+        rows = [
+            self._make_canonical_row("Mentoring Visits", "mentoring coaching supervisor visit"),
+            self._make_canonical_row("Coaching Sessions", "coaching supervisory visit supportive supervision"),
+        ]
+        comp = pd.DataFrame(rows)
+        result, merged = apply_force_merges(comp)
+        assert "Supportive Supervision Systems" in result["Canonical_Intervention"].tolist()
+        assert merged >= 1
+
+    def test_training_rows_merged(self):
+        rows = [
+            self._make_canonical_row("Refresher Training", "refresher training in-service skill"),
+            self._make_canonical_row("Orientation Workshops", "workshop orientation capacit"),
+        ]
+        comp = pd.DataFrame(rows)
+        result, merged = apply_force_merges(comp)
+        assert "Training and Capacity Building for CHWs" in result["Canonical_Intervention"].tolist()
+
+    def test_unmatched_rows_unchanged(self):
+        rows = [
+            self._make_canonical_row("Community Scorecard", "community scorecard participat feedback"),
+        ]
+        comp = pd.DataFrame(rows)
+        result, merged = apply_force_merges(comp)
+        assert merged == 0
+        assert "Community Scorecard" in result["Canonical_Intervention"].tolist()
+
+    def test_merged_row_combines_references(self):
+        rows = [
+            {**self._make_canonical_row("PBF", "incentiv bonus"), "_references": "Smith 2020"},
+            {**self._make_canonical_row("Bonus Pay", "incentiv bonus payment"), "_references": "Jones 2021"},
+        ]
+        comp = pd.DataFrame(rows)
+        result, _ = apply_force_merges(comp)
+        merged_row = result[result["Canonical_Intervention"] == "Financial Incentive Systems for CHWs"].iloc[0]
+        assert "Smith 2020" in merged_row["_references"]
+        assert "Jones 2021" in merged_row["_references"]
+
+    def test_variants_list_accumulated_after_merge(self):
+        rows = [
+            self._make_canonical_row("PBF Scheme", "incentiv bonus"),
+            self._make_canonical_row("Cash Transfer", "cash transfer incentiv"),
+        ]
+        comp = pd.DataFrame(rows)
+        result, _ = apply_force_merges(comp)
+        merged_row = result[result["Canonical_Intervention"] == "Financial Incentive Systems for CHWs"].iloc[0]
+        vl = str(merged_row.get("Variants_List", ""))
+        assert "PBF Scheme" in vl or "Cash Transfer" in vl
+
+
+# ---------------------------------------------------------------------------
+# recheck_chw_canonical
+# ---------------------------------------------------------------------------
+
+class TestRecheckChwCanonical:
+    def _make_comp(self):
+        df = _make_df(n=3)
+        df = assign_clusters(df, batch_size=3)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        return pd.DataFrame(rows)
+
+    def test_returns_tuple_df_int(self):
+        comp = self._make_comp()
+        result, removed = recheck_chw_canonical(comp)
+        assert isinstance(result, pd.DataFrame)
+        assert isinstance(removed, int)
+
+    def test_non_chw_canonicals_removed(self):
+        rows = [
+            {
+                "Canonical_Intervention": "CHW Performance Bonuses",
+                "Description": "Community health workers received bonuses.",
+                "Intervention_Family": "Motivation",
+                "Strength_of_Evidence": "moderate",
+            },
+            {
+                "Canonical_Intervention": "National Health Policy Reform",
+                "Description": "Ministry of health strategy health sector reform.",
+                "Intervention_Family": "Governance",
+                "Strength_of_Evidence": "weak",
+            },
+        ]
+        comp = pd.DataFrame(rows)
+        result, removed = recheck_chw_canonical(comp)
+        assert removed >= 1
+        assert "CHW Performance Bonuses" in result["Canonical_Intervention"].tolist()
+
+    def test_all_chw_rows_kept(self):
+        comp = self._make_comp()
+        result, removed = recheck_chw_canonical(comp)
+        # _make_df rows all contain "community health workers" — should all pass
+        assert removed == 0
+
+
+# ---------------------------------------------------------------------------
+# _drop_general_interventions_package
+# ---------------------------------------------------------------------------
+
+class TestDropGeneralInterventions:
+    def _make_comp_with_general(self):
+        df = _make_df(n=4)
+        df = assign_clusters(df, batch_size=4)
+        rows = [score_transferability(aggregate_cluster(g.copy(), int(cid)))
+                for cid, g in df.groupby("_cluster")]
+        comp = pd.DataFrame(rows)
+        comp = assign_packages(comp)
+        # Force one row into General Interventions
+        from tools.hrh_compendium_builder import _FALLBACK_PACKAGE
+        comp.iloc[0, comp.columns.get_loc("Intervention_Package")] = _FALLBACK_PACKAGE
+        return comp
+
+    def test_no_general_interventions_remain_after_drop(self):
+        from tools.hrh_compendium_builder import _FALLBACK_PACKAGE
+        comp = self._make_comp_with_general()
+        result = _drop_general_interventions_package(comp)
+        assert _FALLBACK_PACKAGE not in result["Intervention_Package"].tolist()
+
+    def test_result_is_dataframe(self):
+        comp = self._make_comp_with_general()
+        result = _drop_general_interventions_package(comp)
+        assert isinstance(result, pd.DataFrame)

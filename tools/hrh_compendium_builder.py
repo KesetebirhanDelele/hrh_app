@@ -270,38 +270,58 @@ _MAX_PACKAGES_PER_DOMAIN = 8
 _FALLBACK_PACKAGE = "General Interventions"
 
 # ---------------------------------------------------------------------------
-# CHW scope filter constants
+# CHW scope filter constants  (strict — default EXCLUDE)
 # ---------------------------------------------------------------------------
 
-# Positive signals — any match → include
-_CHW_INCLUDE_TERMS = [
+# Level 1: Explicit CHW/HEW mention → include regardless of context
+_CHW_STRONG_TERMS = [
     "community health worker", "chw", "health extension worker", "hew",
-    "community health volunteer", "lay health worker", "health extension",
-    "community health", "village health", "community-based health",
-    "outreach worker", "frontline health", "community worker",
-    "community health aide", "community health promoter",
-    "primary health care worker", "health extension program",
+    "community health volunteer", "lay health worker",
+    "village health worker", "community health aide",
+    "community health promoter", "health extension program",
+    "health extension worker", "health post",
 ]
 
-# Supervisor context — if paired with community/PHC signal → include
-_CHW_SUPERVISOR_TERMS = [
-    "supportive supervision", "chw supervisor", "hew supervisor",
-    "community health supervisor", "primary care supervisor",
+# Level 2: CHW-affecting mechanisms — include when these appear
+_CHW_CONTEXT_INCLUDE = [
+    "supportive supervision",       # canonical CHW term
+    "chw supervision", "hew supervision",
+    "chw incentive", "hew incentive",
+    "chw training", "hew training",
+    "chw workload", "hew workload",
+    "community health supervision",
+    "frontline worker supervision",
+    "community-based health",
+    "village health",
+    "health extension",             # broad programme reference
+    "community health",             # broad cadre reference
+    "frontline health",
+    "outreach worker",
+    "primary health care worker",
 ]
 
-# Hard exclusion — primarily non-CHW specialist cadres
+# Level 3: Supervisor with frontline/community context → include
+_CHW_SUPERVISOR_PAIRED = ["community", "primary health", "frontline", "rural", "chw", "hew"]
+
+# Hard exclusions — non-CHW specialist cadres
 _CHW_EXCLUDE_PRIMARY = [
     "physician", "medical specialist", "specialist physician",
     "pharmacist", "pharmacy technician", "tertiary care",
     "tertiary hospital", "secondary care", "inpatient care",
     "intensive care unit", "operating theatre", "surgical ward",
+    "hospital-based specialist",
 ]
 
-# Nurse exclusion context (unless community/supervisory)
-_NURSE_EXCLUDE_CONTEXT = [
-    "bedside nursing", "inpatient nursing", "ward nurse",
-    "hospital nurse", "clinical nursing care",
+# General governance — exclude unless an explicit CHW term is also present
+_GENERAL_GOVERNANCE_EXCLUDE = [
+    "national health policy", "health system governance",
+    "health sector reform", "health financing strategy",
+    "national insurance", "health legislation",
+    "ministry of health strategy",
 ]
+
+# Nurse: exclude unless community / supervisory context present
+_NURSE_CHW_CONTEXT = ["community", "supervis", "primary health", "chw", "hew", "frontline"]
 
 # Country-name strip pattern for description cleanup
 _COUNTRY_STRIP_RE = re.compile(
@@ -322,7 +342,11 @@ _CONSOLIDATE_THRESHOLD = 150  # trigger second-pass merging above this count
 # ---------------------------------------------------------------------------
 
 def is_relevant_to_chw(row: pd.Series) -> bool:
-    """Return True if this row is relevant to CHW / frontline PHC workforce."""
+    """Return True ONLY if the row explicitly involves CHWs/HEWs or clearly
+    affects them via supervision, incentives, training, or workload.
+
+    Default is EXCLUDE — a row must positively match to be kept.
+    """
     text = " ".join([
         str(row.get("Title", "")),
         str(row.get("Description", "")),
@@ -330,29 +354,35 @@ def is_relevant_to_chw(row: pd.Series) -> bool:
         str(row.get("HRH-II Package Component", "")),
     ]).lower()
 
-    # Strong CHW inclusion signals
-    if any(term in text for term in _CHW_INCLUDE_TERMS):
-        return True
-
-    # Supervisor working with community / frontline staff
-    if any(term in text for term in _CHW_SUPERVISOR_TERMS):
-        return True
-    if "supervis" in text and any(t in text for t in ["community", "primary health", "frontline"]):
-        return True
-
-    # Hard exclusions
+    # Hard exclusions first (override everything)
     if any(term in text for term in _CHW_EXCLUDE_PRIMARY):
         return False
 
-    # Nurses: include only if clearly community / supervisory context
-    if "nurse" in text or "nursing" in text:
-        if any(t in text for t in ["community", "supervis", "primary health", "chw", "hew"]):
-            return True
-        if any(t in text for t in _NURSE_EXCLUDE_CONTEXT):
+    # Nurses: only include if clearly community / supervisory
+    if ("nurse" in text or "nursing" in text) and not any(
+        t in text for t in _NURSE_CHW_CONTEXT
+    ):
+        return False
+
+    # General governance: only include if an explicit CHW term is also present
+    if any(term in text for term in _GENERAL_GOVERNANCE_EXCLUDE):
+        if not any(term in text for term in _CHW_STRONG_TERMS + _CHW_CONTEXT_INCLUDE):
             return False
 
-    # Default: include (HRH context is broadly relevant)
-    return True
+    # Level 1: explicit CHW/HEW mention
+    if any(term in text for term in _CHW_STRONG_TERMS):
+        return True
+
+    # Level 2: CHW-affecting mechanism keywords
+    if any(term in text for term in _CHW_CONTEXT_INCLUDE):
+        return True
+
+    # Level 3: supervision + frontline/community context
+    if "supervis" in text and any(t in text for t in _CHW_SUPERVISOR_PAIRED):
+        return True
+
+    # Default: EXCLUDE
+    return False
 
 
 def filter_chw_relevant(df: pd.DataFrame) -> pd.DataFrame:
@@ -817,6 +847,187 @@ def build_evidence_map(
 
 
 # ---------------------------------------------------------------------------
+# Force-merge rules (requirement #3)
+# ---------------------------------------------------------------------------
+
+# Each rule names a canonical target and the keyword triggers that map to it.
+# Matching happens against: Canonical_Intervention + Description + Mechanism.
+FORCE_MERGE_RULES: List[Dict] = [
+    {
+        "canonical_name": "Financial Incentive Systems for CHWs",
+        "keywords": [
+            "incentiv", "bonus", "pbf", "performance-based financ",
+            "salary augment", "cash transfer", "allowance", "outreach incentive",
+            "financial reward", "monetary reward",
+        ],
+    },
+    {
+        "canonical_name": "Supportive Supervision Systems",
+        "keywords": [
+            "supervis", "mentoring", "coaching", "supervisor visit",
+            "supervisory visit", "supportive supervision",
+        ],
+    },
+    {
+        "canonical_name": "Training and Capacity Building for CHWs",
+        "keywords": [
+            "train", "capacit", "skill building", "workshop", "orientation",
+            "in-service", "refresher", "pre-service", "on-the-job learning",
+        ],
+    },
+    {
+        "canonical_name": "Digital Tools for CHW Support",
+        "keywords": [
+            "digital", "mhealth", "ehealth", "mobile app", "smartphone",
+            "tablet", "electronic health", "software platform", "ict tool",
+        ],
+    },
+]
+
+
+def _merge_canonical_rows(group_df: pd.DataFrame, canonical_name: str) -> Dict:
+    """Merge a group of canonical intervention rows into one representative row."""
+    # Representative: row with strongest evidence
+    def _sv(s: str) -> int:
+        return STRENGTH_ORDER.get(str(s).lower().strip(), 0)
+
+    best_idx = group_df["Strength_of_Evidence"].map(_sv).idxmax()
+    rep = group_df.loc[best_idx].to_dict()
+    rep["Canonical_Intervention"] = canonical_name
+
+    # Merge variant titles from all members
+    all_variants: List[str] = []
+    for _, row in group_df.iterrows():
+        vt = row.get("_variant_titles", [])
+        if isinstance(vt, list):
+            all_variants.extend(vt)
+        ci = str(row.get("Canonical_Intervention", ""))
+        if ci and ci != canonical_name:
+            all_variants.append(ci)
+    rep["_variant_titles"] = list(dict.fromkeys(t for t in all_variants if t))
+    rep["Variants_List"] = "; ".join(rep["_variant_titles"])
+
+    # Merge evidence types
+    ev_types = sorted(set(
+        t.strip()
+        for _, row in group_df.iterrows()
+        for t in str(row.get("Evidence_Types", "")).split(";")
+        if t.strip() and t.strip() != "no_evidence_found"
+    ))
+    rep["Evidence_Types"] = "; ".join(ev_types) if ev_types else "no_evidence_found"
+
+    # Merge references
+    refs = list(dict.fromkeys(
+        r.strip()
+        for _, row in group_df.iterrows()
+        for r in str(row.get("_references", "")).split(";")
+        if r.strip()
+    ))
+    rep["_references"] = "; ".join(refs)
+    return rep
+
+
+def apply_force_merges(compendium_df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Apply FORCE_MERGE_RULES: collapse all matching rows into their target name.
+
+    Returns (updated_df, merged_count) where merged_count is the number of
+    canonical rows absorbed into force-merge targets.
+    """
+    df = compendium_df.copy()
+
+    def _target(row: pd.Series) -> Optional[str]:
+        text = " ".join([
+            str(row.get("Canonical_Intervention", "")),
+            str(row.get("Description", "")),
+            str(row.get("Mechanism", "")),
+        ]).lower()
+        for rule in FORCE_MERGE_RULES:
+            if any(kw in text for kw in rule["keywords"]):
+                return rule["canonical_name"]
+        return None
+
+    df["_fm_target"] = df.apply(_target, axis=1)
+    forced = df[df["_fm_target"].notna()]
+    not_forced = df[df["_fm_target"].isna()].drop(columns=["_fm_target"])
+
+    merged_count = 0
+    merged_rows: List[Dict] = []
+    for target_name, grp in forced.groupby("_fm_target"):
+        merged_count += max(0, len(grp) - 1)
+        merged_rows.append(_merge_canonical_rows(grp.drop(columns=["_fm_target"]), str(target_name)))
+
+    result = pd.concat(
+        [pd.DataFrame(merged_rows), not_forced],
+        ignore_index=True,
+    )
+    return result, merged_count
+
+
+def recheck_chw_canonical(compendium_df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Remove canonical interventions whose title+description fail the CHW filter."""
+    before = len(compendium_df)
+
+    def _is_chw(row: pd.Series) -> bool:
+        return is_relevant_to_chw(pd.Series({
+            "Title": row.get("Canonical_Intervention", ""),
+            "Description": row.get("Description", ""),
+            "Target cadre & setting": "",
+            "HRH-II Package Component": row.get("Intervention_Family", ""),
+        }))
+
+    mask = compendium_df.apply(_is_chw, axis=1)
+    filtered = compendium_df[mask].reset_index(drop=True)
+    removed = before - len(filtered)
+    return filtered, removed
+
+
+def _drop_general_interventions_package(compendium_df: pd.DataFrame) -> pd.DataFrame:
+    """Remove or reassign items sitting in the 'General Interventions' package.
+
+    Strategy:
+    - Re-run _score_package with the domain keyword map.
+    - If a real package is found → reassign.
+    - If still no match → drop the row (too vague to be useful).
+    """
+    if "Intervention_Package" not in compendium_df.columns:
+        return compendium_df
+
+    df = compendium_df.copy()
+    general_mask = df["Intervention_Package"] == _FALLBACK_PACKAGE
+    keep_rows: List[pd.Series] = []
+
+    for _, row in df[general_mask].iterrows():
+        domain = str(row.get("Table3_Domain", ""))
+        domain_pkgs = PACKAGE_KEYWORDS.get(domain, {})
+        combined = " ".join([
+            str(row.get("Canonical_Intervention", "")),
+            str(row.get("Description", "")),
+            str(row.get("Mechanism", "")),
+        ])
+        best = _score_package(combined, domain_pkgs)
+        if best != _FALLBACK_PACKAGE:
+            row = row.copy()
+            row["Intervention_Package"] = best
+            keep_rows.append(row)
+        # else: drop — too generic
+
+    non_general = df[~general_mask]
+    if keep_rows:
+        reassigned = pd.DataFrame(keep_rows)
+        result = pd.concat([non_general, reassigned], ignore_index=True)
+    else:
+        result = non_general.reset_index(drop=True)
+
+    dropped = general_mask.sum() - len(keep_rows)
+    if dropped:
+        print(f"      Dropped {dropped} 'General Interventions' items (too generic).")
+    reassigned_count = len(keep_rows)
+    if reassigned_count:
+        print(f"      Reassigned {reassigned_count} 'General Interventions' items to real packages.")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Post-merge consolidation
 # ---------------------------------------------------------------------------
 
@@ -999,10 +1210,16 @@ def deduplicate_canonical_names(compendium_df: pd.DataFrame) -> pd.DataFrame:
 # Step 10 — Validation
 # ---------------------------------------------------------------------------
 
-def validate_structure(compendium_df: pd.DataFrame) -> None:
-    """Validate compendium structure and log warnings.
+def validate_structure(
+    compendium_df: pd.DataFrame,
+    *,
+    removed_non_chw: int = 0,
+    merged_count: int = 0,
+) -> None:
+    """Validate compendium structure and print a summary.
 
     Raises ValueError on hard failures; prints warnings for soft violations.
+    Prints a final summary of key statistics.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -1013,23 +1230,41 @@ def validate_structure(compendium_df: pd.DataFrame) -> None:
         dupe_names = compendium_df.loc[dupes, "Canonical_Intervention"].tolist()
         errors.append(f"Duplicate canonical intervention names: {dupe_names}")
 
+    # CHW relevance check on canonical names
+    non_chw_items: List[str] = []
+    for _, row in compendium_df.iterrows():
+        proxy = pd.Series({
+            "Title": row.get("Canonical_Intervention", ""),
+            "Description": row.get("Description", ""),
+            "Target cadre & setting": "",
+            "HRH-II Package Component": row.get("Intervention_Family", ""),
+        })
+        if not is_relevant_to_chw(proxy):
+            non_chw_items.append(str(row.get("Canonical_Intervention", "")))
+    if non_chw_items:
+        warnings.append(
+            f"{len(non_chw_items)} canonical interventions may not be CHW-relevant "
+            f"(sample: {non_chw_items[:3]})"
+        )
+
+    # No "General Interventions" package
+    if "Intervention_Package" in compendium_df.columns:
+        general_count = (compendium_df["Intervention_Package"] == _FALLBACK_PACKAGE).sum()
+        if general_count:
+            warnings.append(
+                f"{general_count} item(s) still in '{_FALLBACK_PACKAGE}' — consider review"
+            )
+
     for domain, group in compendium_df.groupby("Table3_Domain"):
-        # Each domain must have ≥1 package
         if "Intervention_Package" not in group.columns:
             errors.append(f"Domain '{domain}': Intervention_Package column missing")
             continue
-
         pkgs = group["Intervention_Package"].unique().tolist()
         if not pkgs:
             errors.append(f"Domain '{domain}': no packages assigned")
-
-        # Each package must have ≥1 intervention (guaranteed by assign_packages, but verify)
         for pkg in pkgs:
-            pkg_count = (group["Intervention_Package"] == pkg).sum()
-            if pkg_count == 0:
+            if (group["Intervention_Package"] == pkg).sum() == 0:
                 errors.append(f"Domain '{domain}' / Package '{pkg}': 0 interventions")
-
-        # Warn if too granular
         if len(pkgs) > 10:
             warnings.append(
                 f"Domain '{domain}' has {len(pkgs)} packages (>10) — consider consolidating"
@@ -1040,6 +1275,11 @@ def validate_structure(compendium_df: pd.DataFrame) -> None:
 
     if errors:
         raise ValueError("Structure validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
+
+    # Summary
+    print(f"  final_count         : {len(compendium_df)}")
+    print(f"  removed_non_chw     : {removed_non_chw}")
+    print(f"  merged_count        : {merged_count}")
 
 
 # ---------------------------------------------------------------------------
@@ -1113,7 +1353,6 @@ def write_word(compendium_df: pd.DataFrame, output_path: Path) -> None:
         Heading 2  → Intervention_Package
         Heading 3  → Canonical_Intervention
                        ... content ...
-                       Variants / Examples (original titles from cluster)
     """
     if not _DOCX:  # pragma: no cover
         print("  [WARN] python-docx not installed — skipping Word output")
@@ -1169,15 +1408,25 @@ def write_word(compendium_df: pd.DataFrame, output_path: Path) -> None:
                 _bold_field("Mechanism", row.get("Mechanism", ""))
 
                 # Evidence block
+                ev_sentences = [s.strip() for s in str(row.get("Evidence_Summary", "")).split(" | ") if s.strip() and s.strip() != "no_evidence_found"]
+                ev_types = [t.strip() for t in str(row.get("Evidence_Types", "")).split(";") if t.strip() and t.strip() != "no_evidence_found"]
                 p = doc.add_paragraph()
-                p.add_run("Evidence: ").bold = True
-                p.add_run(str(row.get("Evidence_Summary", "")))
+                p.add_run("Evidence:").bold = True
+                if len(ev_sentences) > 1:
+                    for sent in ev_sentences:
+                        doc.add_paragraph(sent, style="List Bullet")
+                elif ev_sentences:
+                    p.add_run(" " + ev_sentences[0])
                 p2 = doc.add_paragraph()
-                p2.add_run("  Strength: ").bold = True
+                p2.add_run("Strength of Evidence: ").bold = True
                 p2.add_run(str(row.get("Strength_of_Evidence", "")))
                 p3 = doc.add_paragraph()
-                p3.add_run("  Type(s): ").bold = True
-                p3.add_run(str(row.get("Evidence_Types", "")))
+                p3.add_run("Evidence Type(s):").bold = True
+                if len(ev_types) > 1:
+                    for et in ev_types:
+                        doc.add_paragraph(et, style="List Bullet")
+                elif ev_types:
+                    p3.add_run(" " + ev_types[0])
 
                 _bold_field("Expected Impact", row.get("Expected_Impact", ""))
 
@@ -1192,15 +1441,15 @@ def write_word(compendium_df: pd.DataFrame, output_path: Path) -> None:
 
                 _bold_field("Transferability", row.get("Transferability", ""))
                 _bold_field("Rationale", row.get("Transferability_Rationale", ""))
-                _bold_field("References", row.get("_references", ""))
 
-                # Step 8.2: Variants / Examples — original titles from cluster
-                variant_titles = row.get("_variant_titles", [])
-                if isinstance(variant_titles, list) and len(variant_titles) > 1:
+                # References as bullet list
+                refs_raw = str(row.get("_references", ""))
+                refs = [r.strip() for r in refs_raw.split(";") if r.strip()]
+                if refs:
                     p = doc.add_paragraph()
-                    p.add_run("Variants / Examples:").bold = True
-                    for vt in variant_titles:
-                        doc.add_paragraph(vt, style="List Bullet")
+                    p.add_run("References:").bold = True
+                    for ref in refs:
+                        doc.add_paragraph(ref, style="List Bullet")
 
                 doc.add_paragraph("─" * 60)
 
@@ -1216,27 +1465,25 @@ def run_pipeline(input_path: Path, output_dir: Path) -> None:
     excel_out = output_dir / f"HRH_Compendium_{timestamp}.xlsx"
     word_out = output_dir / f"HRH_Compendium_{timestamp}.docx"
 
-    # ------------------------------------------------------------------
-    print(f"[1/9] Loading data from {input_path} ...")
+    # 1 ── Load
+    print(f"[1/11] Loading data from {input_path} ...")
     df = load_data(input_path)
     initial_count = len(df)
-    print(f"      Initial rows: {initial_count}")
+    print(f"       Initial rows: {initial_count}")
 
-    # ------------------------------------------------------------------
-    print("[2/9] Filtering to CHW-relevant interventions ...")
+    # 2 ── Strict CHW filter (input rows)
+    print("[2/11] Strict CHW filter ...")
     df = filter_chw_relevant(df)
     filtered_count = len(df)
-    print(f"      Rows after filter: {filtered_count}")
 
-    # ------------------------------------------------------------------
-    print(f"[3/9] Global clustering (target {_TARGET_MIN_CANONICAL}–{_TARGET_MAX_CANONICAL} "
-          f"canonical interventions) ...")
+    # 3 ── Global clustering
+    print(f"[3/11] Global clustering "
+          f"(target {_TARGET_MIN_CANONICAL}–{_TARGET_MAX_CANONICAL}) ...")
     df = assign_clusters(df, target_min=_TARGET_MIN_CANONICAL, target_max=_TARGET_MAX_CANONICAL)
-    n_clusters = df["_cluster"].nunique()
-    print(f"      {n_clusters} raw clusters identified.")
+    print(f"       {df['_cluster'].nunique()} raw clusters.")
 
-    # ------------------------------------------------------------------
-    print("[4/9] Aggregating clusters → canonical interventions ...")
+    # 4 ── Aggregate
+    print("[4/11] Aggregating clusters → canonical interventions ...")
     canonical_rows = []
     for cid, group in df.groupby("_cluster"):
         row = aggregate_cluster(group.copy(), int(cid))
@@ -1244,36 +1491,48 @@ def run_pipeline(input_path: Path, output_dir: Path) -> None:
         canonical_rows.append(row)
     compendium_df = pd.DataFrame(canonical_rows)
     compendium_df = deduplicate_canonical_names(compendium_df)
-    n_dupes = sum(1 for n in compendium_df["Canonical_Intervention"] if re.search(r"\s\(\d+\)$", n))
-    if n_dupes:
-        print(f"      {n_dupes} duplicate name(s) disambiguated.")
-    print(f"      {len(compendium_df)} canonical interventions after first pass.")
+    print(f"       {len(compendium_df)} canonical interventions after clustering.")
 
-    # ------------------------------------------------------------------
-    print("[5/9] Consolidating if oversized ...")
+    # 5 ── Post-cluster CHW recheck
+    print("[5/11] Post-cluster CHW recheck ...")
+    compendium_df, removed_non_chw = recheck_chw_canonical(compendium_df)
+    print(f"       Removed {removed_non_chw} non-CHW canonical interventions.")
+
+    # 6 ── Force merges
+    print("[6/11] Applying force-merge rules ...")
+    compendium_df, merged_count = apply_force_merges(compendium_df)
+    compendium_df = deduplicate_canonical_names(compendium_df)
+    print(f"       {merged_count} canonical interventions merged into force-merge targets.")
+    print(f"       {len(compendium_df)} canonical interventions after force merges.")
+
+    # 7 ── Consolidate if still oversized
+    print("[7/11] Consolidating if oversized ...")
     compendium_df = _consolidate_if_oversized(compendium_df)
     compendium_df = deduplicate_canonical_names(compendium_df)
     final_canonical_count = len(compendium_df)
-    print(f"      Final canonical intervention count: {final_canonical_count}")
+    print(f"       {final_canonical_count} canonical interventions.")
 
-    # ------------------------------------------------------------------
-    print("[6/9] Assigning intervention packages ...")
+    # 8 ── Package assignment + remove "General Interventions"
+    print("[8/11] Assigning intervention packages ...")
     compendium_df = assign_packages(compendium_df)
+    compendium_df = _drop_general_interventions_package(compendium_df)
     for domain, grp in compendium_df.groupby("Table3_Domain"):
-        pkg_count = grp["Intervention_Package"].nunique()
-        print(f"      {domain}: {pkg_count} package(s)")
+        print(f"       {domain}: {grp['Intervention_Package'].nunique()} package(s)")
 
-    # ------------------------------------------------------------------
-    print("[7/9] Validating structure ...")
-    validate_structure(compendium_df)
-    print("      Validation passed.")
+    # 9 ── Validation
+    print("[9/11] Validating structure ...")
+    validate_structure(
+        compendium_df,
+        removed_non_chw=removed_non_chw,
+        merged_count=merged_count,
+    )
 
-    # ------------------------------------------------------------------
-    print("[8/9] Building evidence map ...")
+    # 10 ── Evidence map
+    print("[10/11] Building evidence map ...")
     evidence_map_df = build_evidence_map(df, compendium_df)
 
-    # ------------------------------------------------------------------
-    print(f"[9/9] Writing outputs ...")
+    # 11 ── Write outputs
+    print("[11/11] Writing outputs ...")
     write_excel(compendium_df, evidence_map_df, excel_out)
     write_word(compendium_df, word_out)
 
@@ -1281,7 +1540,9 @@ def run_pipeline(input_path: Path, output_dir: Path) -> None:
     print("Pipeline complete.")
     print(f"  Initial rows:              {initial_count}")
     print(f"  After CHW filter:          {filtered_count}")
-    print(f"  Canonical interventions:   {final_canonical_count}")
+    print(f"  Removed non-CHW canonical: {removed_non_chw}")
+    print(f"  Force-merged:              {merged_count}")
+    print(f"  Final canonical count:     {final_canonical_count}")
     print(f"  Excel: {excel_out}")
     print(f"  Word:  {word_out}")
     print("=" * 60)
