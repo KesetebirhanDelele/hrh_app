@@ -287,11 +287,12 @@ def render_prompt_with_rag(
     spec_path: str,
     spec_id: str,
     query_text: str,
-    index_data: Dict[str, Any],
+    index_data: Optional[Dict[str, Any]] = None,
     top_k: int = 20,
     country_name: Optional[str] = None,
     country_iso3: Optional[str] = None,
     item_inputs: Optional[Dict[str, Any]] = None,
+    retriever: Optional[Any] = None,
 ) -> str:
     """Render a prompt for a single question/item using RAG retrieval.
 
@@ -304,19 +305,25 @@ def render_prompt_with_rag(
         spec_path: Path to the spec JSON.
         spec_id: Spec identifier.
         query_text: The question or item text to retrieve snippets for.
-        index_data: Loaded embedding index (from load_index).
+        index_data: Loaded embedding index (from load_index). Used when
+            *retriever* is None (legacy path).
         top_k: Number of snippets to retrieve.
         country_name: Country name (for country-specific jobs).
         country_iso3: ISO3 code.
         item_inputs: Pre-built inputs dict for the specific item (e.g. single question).
+        retriever: Optional HybridRetriever instance. When provided, used instead
+            of the plain vector-only retrieve() call for better accuracy.
 
     Returns:
         The rendered prompt string with retrieved sources.
     """
     template = _read_text(Path(template_path))
 
-    # Retrieve relevant snippets
-    retrieved = retrieve(index_data, query_text, top_k=top_k)
+    # Retrieve relevant snippets — prefer HybridRetriever when available
+    if retriever is not None:
+        retrieved = retriever.retrieve(query_text, top_k)
+    else:
+        retrieved = retrieve(index_data, query_text, top_k=top_k)
     allowed_sources = group_by_source(retrieved)
 
     # Build inputs

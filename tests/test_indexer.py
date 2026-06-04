@@ -153,6 +153,36 @@ class TestGroupBySource:
 # build_index (mocked)
 # ---------------------------------------------------------------------------
 
+class TestNumpyRetrieve:
+    """Verify that the numpy-based retrieve() returns the same ordering as the
+    manual cosine similarity tests above (regression guard)."""
+
+    @patch("app.ingest.indexer._embed_texts")
+    def test_numpy_ordering_matches_expected(self, mock_embed: MagicMock) -> None:
+        mock_embed.return_value = [[1.0, 0.0, 0.0]]
+
+        index = _make_index([
+            _snippet("SRC1", "staffing", [0.0, 1.0, 0.0]),     # orthogonal -> score 0
+            _snippet("SRC2", "budget", [1.0, 0.0, 0.0]),       # identical -> score 1
+            _snippet("SRC3", "training", [0.5, 0.5, 0.0]),     # partial -> ~0.7
+        ])
+
+        results = retrieve(index, "test query", top_k=3, api_key="fake")
+
+        assert len(results) == 3
+        assert results[0]["source_id"] == "SRC2"   # highest similarity
+        assert results[1]["source_id"] == "SRC3"   # second
+        assert results[2]["source_id"] == "SRC1"   # lowest
+
+    @patch("app.ingest.indexer._embed_texts")
+    def test_score_is_rounded_float(self, mock_embed: MagicMock) -> None:
+        mock_embed.return_value = [[1.0, 0.0]]
+        index = _make_index([_snippet("SRC1", "text", [1.0, 0.0])])
+        results = retrieve(index, "q", top_k=1, api_key="fake")
+        assert isinstance(results[0]["score"], float)
+        assert results[0]["score"] == pytest.approx(1.0, abs=0.01)
+
+
 class TestBuildIndex:
     @patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"})
     @patch("app.ingest.indexer._embed_texts")

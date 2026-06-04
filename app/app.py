@@ -148,6 +148,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             index_data = load_index(index_path)
             print(f"  Index has {index_data.get('snippet_count', '?')} snippets")
 
+            # Build hybrid retriever (vector + BM25) for better accuracy
+            from app.ingest.indexer import build_retriever as _build_retriever
+            _rag_retriever = _build_retriever(index_data, api_key=os.getenv("OPENAI_API_KEY", ""))
+            print("  Hybrid retriever ready (vector + BM25 + RRF + MMR)")
+
             spec = _read_json(Path(str(job.spec_file)))
             top_k = int(os.getenv("HRH_RAG_TOP_K", "40"))
             country_name = getattr(args, "country_name", None)
@@ -176,6 +181,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     country_name=country_name,
                     country_iso3=country_iso3,
                     item_inputs=item_inputs,
+                    retriever=_rag_retriever,
                 )
 
                 # LLM call — skip per-item schema validation (partial output won't

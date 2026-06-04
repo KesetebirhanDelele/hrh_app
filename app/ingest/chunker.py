@@ -9,12 +9,15 @@ from app.ingest.loader import Snippet
 
 def chunk_snippets(
     snippets: List[Snippet],
-    max_chars: int = 2000,
+    max_chars: int = 800,
+    overlap_chars: int = 150,
 ) -> List[Snippet]:
-    """Split large text snippets into smaller chunks.
+    """Split large text snippets into smaller chunks with sliding overlap.
 
     Tables are never split — they pass through intact regardless of size.
     Text snippets longer than *max_chars* are split at paragraph boundaries.
+    Each chunk (except the first) begins with the tail of the previous chunk
+    (up to *overlap_chars*) so that evidence spanning a boundary is preserved.
 
     Returns a new list of Snippet dicts.
     """
@@ -22,7 +25,6 @@ def chunk_snippets(
 
     for snippet in snippets:
         if snippet["type"] == "table":
-            # Keep tables intact
             result.append(snippet)
             continue
 
@@ -44,18 +46,30 @@ def chunk_snippets(
             para = para.strip()
             if not para:
                 continue
-            # If adding this paragraph would exceed limit, flush current chunk
             if current_len + len(para) + 1 > max_chars and current_chunk:
                 chunk_texts.append("\n".join(current_chunk))
-                current_chunk = []
-                current_len = 0
+                # Carry overlap into next chunk when overlap_chars > 0.
+                # Note: flushed[-0:] returns the full string, so we guard explicitly.
+                if overlap_chars > 0:
+                    flushed = chunk_texts[-1]
+                    if len(flushed) > overlap_chars:
+                        tail = flushed[-overlap_chars:]
+                        # Walk forward to the first space so the overlap starts cleanly
+                        space_idx = tail.find(" ")
+                        tail = tail[space_idx + 1:] if space_idx != -1 else tail
+                    else:
+                        tail = flushed
+                    current_chunk = [tail] if tail else []
+                    current_len = len(tail)
+                else:
+                    current_chunk = []
+                    current_len = 0
             current_chunk.append(para)
-            current_len += len(para) + 1  # +1 for newline
+            current_len += len(para) + 1
 
         if current_chunk:
             chunk_texts.append("\n".join(current_chunk))
 
-        # Create snippets for each chunk
         for chunk_idx, chunk_text in enumerate(chunk_texts):
             locator = snippet["locator"]
             if len(chunk_texts) > 1:

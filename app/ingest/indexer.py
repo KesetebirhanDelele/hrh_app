@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 from openai import OpenAI
 
 
@@ -17,7 +18,11 @@ BATCH_SIZE = 100  # Keep batches under OpenAI's 300K token-per-request limit
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Compute cosine similarity between two vectors without numpy."""
+    """Compute cosine similarity between two vectors without numpy.
+
+    Kept for backward compatibility — tests import this directly.
+    The retrieve() function uses numpy internally for speed.
+    """
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
@@ -34,7 +39,6 @@ def _embed_texts(texts: List[str], api_key: str, model: str = EMBEDDING_MODEL) -
     for i in range(0, len(texts), BATCH_SIZE):
         batch = texts[i : i + BATCH_SIZE]
         resp = client.embeddings.create(model=model, input=batch)
-        # Sort by index to preserve order
         sorted_data = sorted(resp.data, key=lambda x: x.index)
         all_embeddings.extend([d.embedding for d in sorted_data])
 
@@ -87,15 +91,12 @@ def build_index(sources_path: str, output_path: Optional[str] = None) -> str:
 
     print(f"  Embedding {len(entries)} snippets...")
 
-    # Embed all snippet texts
     texts = [e["text"] for e in entries]
     embeddings = _embed_texts(texts, api_key)
 
-    # Attach embeddings to entries
     for entry, emb in zip(entries, embeddings):
         entry["embedding"] = emb
 
-    # Write index
     if output_path is None:
         stem = sources_p.stem.replace("_sources", "")
         output_path = str(sources_p.parent / f"{stem}_index.json")
@@ -129,7 +130,7 @@ def retrieve(
     top_k: int = 20,
     api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Retrieve the top-K most relevant snippets for a query.
+    """Retrieve the top-K most relevant snippets for a query using numpy.
 
     Args:
         index_data: Loaded index (from load_index).
@@ -144,31 +145,38 @@ def retrieve(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for retrieval.")
 
-    # Embed the query
     query_embedding = _embed_texts([query], api_key, model=index_data.get("model", EMBEDDING_MODEL))[0]
 
-    # Score all snippets
-    scored: List[tuple[float, Dict[str, Any]]] = []
-    for snip in index_data.get("snippets", []):
-        emb = snip.get("embedding")
-        if not emb:
-            continue
-        score = _cosine_similarity(query_embedding, emb)
-        scored.append((score, snip))
+    snippets = index_data.get("snippets", [])
+    if not snippets:
+        return []
 
-    # Sort by score descending
-    scored.sort(key=lambda x: x[0], reverse=True)
+    # Build normalised embedding matrix once — O(N·D) but only in numpy
+    matrix = np.array([s["embedding"] for s in snippets], dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    matrix = matrix / np.clip(norms, 1e-9, None)
 
-    # Return top-K without embeddings
+    q = np.array(query_embedding, dtype=np.float32)
+    q_norm = float(np.linalg.norm(q))
+    if q_norm > 1e-9:
+        q = q / q_norm
+
+    scores: np.ndarray = matrix @ q  # shape (N,)
+
+    k = min(top_k, len(snippets))
+    top_indices = np.argpartition(scores, -k)[-k:]
+    top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+
     results: List[Dict[str, Any]] = []
-    for score, snip in scored[:top_k]:
+    for idx in top_indices:
+        snip = snippets[idx]
         results.append({
             "source_id": snip.get("source_id", ""),
             "source_title": snip.get("source_title", ""),
             "locator": snip.get("locator", ""),
             "text": snip.get("text", ""),
             "type": snip.get("type", "text"),
-            "score": round(score, 4),
+            "score": round(float(scores[idx]), 4),
         })
 
     return results
@@ -196,3 +204,29 @@ def group_by_source(snippets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
 
     return list(sources.values())
+
+
+def build_retriever(index_data: Dict[str, Any], api_key: str = "") -> "HybridRetriever":
+    """Factory: build a HybridRetriever from a loaded index dict.
+
+    Constructs VectorIndex and BM25Index from the same snippet list, then
+    wraps them in a HybridRetriever ready for per-query hybrid search.
+
+    Args:
+        index_data: Dict returned by load_index().
+        api_key: OpenAI API key for query embedding. Falls back to env var.
+
+    Returns:
+        HybridRetriever instance.
+    """
+    from app.retrieve.bm25 import BM25Index
+    from app.retrieve.retriever import HybridRetriever
+    from app.retrieve.vector import VectorIndex
+
+    api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+    snippets = index_data.get("snippets", [])
+    model = index_data.get("model", EMBEDDING_MODEL)
+
+    vector_idx = VectorIndex(snippets)
+    bm25_idx = BM25Index(snippets)
+    return HybridRetriever(vector_idx, bm25_idx, api_key=api_key, embedding_model=model)
