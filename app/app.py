@@ -64,7 +64,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     try:
         validate_output(payload, schema_rel)
-        print("VALID ✅")
+        print("VALID [OK]")
         return 0
     except SchemaValidationError as e:
         print(str(e), file=sys.stderr)
@@ -89,7 +89,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
         payload = _read_json(res.output_path)
         validate_output(payload, schema_rel)
-        print("VALID ✅")
+        print("VALID [OK]")
         return 0
 
     if args.mode == "llm":
@@ -220,7 +220,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 if args.job == "domain_solutions_from_evidence" and all_sources:
                     _validate_snippet_verbatim(final_payload, all_sources)
                 print(f"Wrote: {out_path}")
-                print("VALID ✅")
+                print("VALID [OK]")
                 return 0
             except Exception as e:
                 print(str(e), file=sys.stderr)
@@ -316,7 +316,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             if args.job == "domain_solutions_from_evidence" and all_sources:
                 _validate_snippet_verbatim(final_payload, all_sources)
             print(f"Wrote: {out_path}")
-            print("VALID ✅")
+            print("VALID [OK]")
             return 0
         except Exception as e:
             print(str(e), file=sys.stderr)
@@ -661,7 +661,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         try:
             validate_output(final_payload, schema_rel)
             print(f"Wrote: {out_path}")
-            print("VALID ✅")
+            print("VALID [OK]")
             return 0
         except Exception as e:
             print(f"Validation failed: {e}", file=sys.stderr)
@@ -1560,7 +1560,7 @@ def cmd_run_all(args: argparse.Namespace) -> int:
         try:
             result = cmd_run(job_args)
             if result == 0:
-                print(f"[{job_id}] VALID ✅")
+                print(f"[{job_id}] VALID [OK]")
                 results.append((job_id, "SUCCESS"))
             else:
                 print(f"[{job_id}] FAILED ❌ (exit code: {result})")

@@ -166,14 +166,38 @@ _OB_BARRIER_KEYWORDS = (
     "lack of", "lacking", "without", "absence of", "insufficient",
     "inadequate", "barrier", "constraint", "difficulty",
     "hurdle", "challenge", "shortage",
+    # Quantitative/operational gap framing common in health evidence literature
+    "negligible", "gap", "low coverage", "not being",
+    "not meet", "low rate", "unavailability",
+    # Systemic weakness framing
+    "weak", "poor", "limited",
+    # Unplanned burden framing
+    "unplanned",
+    # Payment absence framing
+    "not paid",
+    # Quantitative inadequacy
+    "very low", "is low",
+    # Working condition barriers
+    "hardship", "unsafe", "insecure",
+    # Policy/rights/equity barriers
+    "restrictions", "not uniform",
+    # Off-role task burden
+    "non-health", "non-hep",
+    # Systemic failure framing
+    "sporadic", "inefficien",
+    # Housing / deployment absence framing
+    "no house",
+    # Challenge/difficulty stem (matches "challenge", "challenged", "challenging")
+    "challeng",
 )
 
 # Fallback keywords checked against the item's *statement* when the snippet is empty or
 # lacks primary barrier keywords. These capture operational cost/complexity language that
 # the LLM may express in the statement even when the source snippet is brief or empty.
 _OB_BARRIER_STMT_KEYWORDS = (
-    "lengthy", "time-intensive", "resources", "requires", "resource-intensive",
-    "constraint", "challenge", "hurdle", "difficult", "burdensome",
+    "lengthy", "time-intensive", "time-consuming", "resources", "requires", "resource-intensive",
+    "constraint", "challeng", "hurdle", "difficult", "burdensome",
+    "inefficien", "weak",
 )
 
 # Keywords that signal downstream impact/consequence framing.
@@ -184,6 +208,8 @@ _CI_IMPACT_KEYWORDS = (
     # Expanded: common health-literature impact framing
     "impact", "profound", "suffering", "harm", "patient safety",
     "outcomes", "compromised", "risk", "mortality", "morbidity",
+    # HRH-specific consequence framing
+    "absenteeism", "part-time", "closed",
 )
 
 # Broad terms used in the fallback check: if a snippet contains one of these AND

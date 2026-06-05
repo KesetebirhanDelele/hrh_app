@@ -32,8 +32,9 @@
       "additionalProperties": false,
       "required": ["item_id", "title", "statement", "evidence_type", "evidence_strength", "citations"],
       "properties": {
-        "item_id":   { "$ref": "common.json#/$defs/NonEmptyString" },
-        "title":     { "$ref": "common.json#/$defs/NonEmptyString" },
+        "item_id":        { "$ref": "common.json#/$defs/NonEmptyString" },
+        "intervention_id": { "type": "string" },
+        "title":          { "$ref": "common.json#/$defs/NonEmptyString" },
         "statement": { "$ref": "common.json#/$defs/NonEmptyString" },
         "mechanism":                { "type": "string" },
         "evidence_summary":         { "type": "string" },
@@ -74,9 +75,23 @@
       "additionalProperties": false,
       "required": ["item_id", "title", "statement", "intensity", "citations"],
       "properties": {
-        "item_id":     { "$ref": "common.json#/$defs/NonEmptyString" },
-        "title":       { "$ref": "common.json#/$defs/NonEmptyString" },
+        "item_id":        { "$ref": "common.json#/$defs/NonEmptyString" },
+        "intervention_id": { "type": "string" },
+        "title":          { "$ref": "common.json#/$defs/NonEmptyString" },
         "statement":   { "$ref": "common.json#/$defs/NonEmptyString" },
+        "evidence_type": {
+          "type": "string",
+          "enum": [
+            "intervention_effect",
+            "validated_tool_or_metric",
+            "determinant_mechanism",
+            "recommendation_only"
+          ]
+        },
+        "evidence_strength": {
+          "type": "string",
+          "enum": ["strong", "moderate", "weak"]
+        },
         "intensity": {
           "type": "string",
           "enum": ["low", "medium", "high", "unknown"]
