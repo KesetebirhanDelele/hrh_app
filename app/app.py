@@ -1497,6 +1497,28 @@ def _extract_rag_items(
             }
             items.append((query, item_inputs))
 
+    elif job_id == "domain_lessons_option_b":
+        # One LLM call per (domain × focus_area) — scoped retrieval per topic.
+        target = country_name or country_iso3 or "Global"
+        categories = spec.get("categories", {})
+        for domain in spec.get("domains", []):
+            domain_id = domain.get("domain_id", "")
+            domain_label = domain.get("domain_label", domain_id)
+            for fa in domain.get("focus_areas", []):
+                fa_id = fa.get("focus_area_id", "")
+                fa_label = fa.get("label", fa_id)
+                query = f"{domain_label}: {fa_label}"
+                item_inputs = {
+                    "target_country": target,
+                    "domains": [{
+                        "domain_id": domain_id,
+                        "domain_label": domain_label,
+                        "focus_areas": [{"focus_area_id": fa_id, "label": fa_label}],
+                    }],
+                    "categories": categories,
+                }
+                items.append((query, item_inputs))
+
     else:
         raise KeyError(f"_extract_rag_items: unsupported job_id '{job_id}'")
 

@@ -101,6 +101,33 @@ def render_docx(job_id: str, payload: Dict[str, Any], out_path: Path) -> Path:
             _add_citations(doc, ev.get("citations", []) or [])
             doc.add_paragraph("")
 
+    elif job_id == "rrr_evidence_matrix":
+        _add_heading(doc, "RRR Solutions — Evidence Matrix", level=1)
+        for sol in payload.get("solutions", []):
+            label = f"{sol.get('solution_id', '')}: {sol.get('solution', '')}"
+            _add_heading(doc, label, level=2)
+            _add_paragraph(doc, sol.get("mechanism", ""), bold_prefix="Mechanism: ")
+
+            feas = sol.get("feasibility_resource_constrained", "")
+            if feas:
+                _add_paragraph(doc, feas, bold_prefix="Feasibility (resource-constrained): ")
+
+            risks = sol.get("risks", "")
+            if risks:
+                _add_paragraph(doc, risks, bold_prefix="Risks: ")
+
+            notes = sol.get("implementation_notes", "")
+            if notes:
+                _add_paragraph(doc, notes, bold_prefix="Implementation notes: ")
+
+            ev = sol.get("evidence", {})
+            if ev:
+                _add_paragraph(doc, str(ev.get("quality", "")), bold_prefix="Evidence quality: ")
+                _add_paragraph(doc, ev.get("rationale", ""), bold_prefix="Rationale: ")
+                _add_citations(doc, ev.get("citations", []) or [])
+
+            doc.add_paragraph("")
+
     else:
         raise KeyError(f"render_docx: unsupported job_id '{job_id}'")
 
