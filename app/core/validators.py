@@ -189,15 +189,31 @@ _OB_BARRIER_KEYWORDS = (
     "no house",
     # Challenge/difficulty stem (matches "challenge", "challenged", "challenging")
     "challeng",
+    # Skill/resource mismatch framing
+    "mismatch",
+    # Workload / task burden framing
+    "overload",
+    # Off-role tasks (HEWs doing work not related to health)
+    "not related",
+    # Demotivation as barrier to attendance/performance
+    "demotivat",
+    # Gender-role / maternity deployment barrier
+    "maternity",
 )
 
 # Fallback keywords checked against the item's *statement* when the snippet is empty or
 # lacks primary barrier keywords. These capture operational cost/complexity language that
 # the LLM may express in the statement even when the source snippet is brief or empty.
 _OB_BARRIER_STMT_KEYWORDS = (
-    "lengthy", "time-intensive", "time-consuming", "resources", "requires", "resource-intensive",
+    "lengthy", "time-intensive", "time-consuming", "resources", "requir", "resource-intensive",
     "constraint", "challeng", "hurdle", "difficult", "burdensome",
     "inefficien", "weak",
+    # Explicit barrier label in statement
+    "barrier",
+    # Adequacy / sufficiency framing in statement
+    "inadequate", "insufficient",
+    # Timeliness / limiting framing
+    "not timely", "limit",
 )
 
 # Keywords that signal downstream impact/consequence framing.
@@ -210,6 +226,10 @@ _CI_IMPACT_KEYWORDS = (
     "outcomes", "compromised", "risk", "mortality", "morbidity",
     # HRH-specific consequence framing
     "absenteeism", "part-time", "closed",
+    # Availability / performance deterioration
+    "sporadic", "deteriorat", "declin",
+    # Negative impact framing
+    "negatively",
 )
 
 # Broad terms used in the fallback check: if a snippet contains one of these AND
